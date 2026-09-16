@@ -4,6 +4,13 @@
 
 **From Fargate to Cloud Run — without learning a second cloud from scratch.**
 
+<p align="center">
+  <a href="https://github.com/Robertzu43/fargate-to-cloudrun/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/Robertzu43/fargate-to-cloudrun/tests.yml?label=CI" alt="CI"></a>
+  <a href="https://github.com/Robertzu43/fargate-to-cloudrun/actions/workflows/docdrift.yml"><img src="https://img.shields.io/github/actions/workflow/status/Robertzu43/fargate-to-cloudrun/docdrift.yml?label=Docs%20check" alt="Docs check"></a>
+  <a href="https://github.com/Robertzu43/fargate-to-cloudrun/releases/latest"><img src="https://img.shields.io/github/v/release/Robertzu43/fargate-to-cloudrun" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Robertzu43/fargate-to-cloudrun" alt="License: Apache-2.0"></a>
+</p>
+
 This skill gives your agent a migration workflow and supporting scripts. It guides the agent to
 inspect your ECS/Fargate app, adapt its code and configuration, deploy to Cloud Run, test it,
 and switch production with your approval. You provide access and decide on cost and downtime;
