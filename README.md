@@ -38,7 +38,7 @@ Prints the summary and writes the assessment to `/tmp/assessment.json`.
 ```
 python3 -m unittest tests.test_assess -v
 ```
-43 tests. The suite asserts that every fixture yields its expected verdicts, that no incompatible
+44 tests. The suite asserts that every fixture yields its expected verdicts, that no incompatible
 fixture ever rolls up to `supported`, that every Cloud Run finding carries a citation, and that
 the generated deploy for the demo fixture is byte-identical to the golden files.
 
