@@ -1,129 +1,129 @@
 <p align="center">
-  <img src="assets/logo-wordmark.png" alt="fargate-to-cloudrun" width="640">
+  <img src="assets/logo-wordmark.png" alt="fargate-to-cloudrun" width="440">
 </p>
 
-# Fargate → Cloud Run
+**From Fargate to Cloud Run — without learning a second cloud from scratch.**
 
-**Move your AWS app to Google Cloud Run without learning a second cloud from scratch.**
+This skill gives your agent a migration workflow and supporting scripts. It guides the agent to
+inspect your ECS/Fargate app, adapt its code and configuration, deploy to Cloud Run, test it,
+and switch production with your approval. You provide access and decide on cost and downtime;
+the agent handles the cloud configuration.
 
-An agent skill that inspects your ECS/Fargate application, works out the changes it needs,
-implements them, deploys to Cloud Run, tests real behavior, and carries out a reviewed production
-cutover. You provide access and decide the important tradeoffs. The agent does the cloud work.
+> **Early release.** The helper scripts have automated tests. The full workflow has not yet been
+> independently validated on real migrations. Start with a non-production app.
 
-![The migration workflow: discover, plan, implement, verify, cut over with approval, and operate](assets/migration-flow.svg)
+[Quickstart](#quickstart) · [How it works](#how-it-works) · [What it does](#what-it-does) · [Documentation](#documentation)
 
-[Get started](#get-started) · [How it works](#how-it-works) · [What it handles](#what-it-handles) · [Trust and limits](#trust-and-limits) · [Contribute](#contribute)
+## Quickstart
 
-> **Status: early release.** The local helpers have automated regression tests. The full agent-led
-> workflow still needs independent, real-world migration validation. This is not a one-click guarantee
-> for every ECS workload. Staging is part of the workflow, not its final objective.
+### 1. Install the skill
 
-## Get started
-
-Install it in your coding agent:
+Run this in your terminal and select your coding agent:
 
 ```bash
 npx skills add Robertzu43/fargate-to-cloudrun
 ```
 
-Open your application's repository and ask:
-
-> Migrate my Fargate application to Cloud Run. Inspect AWS and the code, make the necessary changes,
-> deploy and test it, then help me switch production. Ask me before moving live traffic.
-
-You do not need to know the Google Cloud product names or write deployment commands. If you do not
-know your ECS service names, the agent can discover them. If several unrelated apps exist, it will ask
-which one you mean.
-
-**Start with:** Python 3.9+, an authenticated AWS CLI, and the application's source code when available.
-The agent helps you set up Google Cloud access, a billing-enabled project, appropriate permissions and
-Docker when they are needed. **Google Cloud setup is not required for the initial assessment.**
-
-The skill uses ordinary CLI commands and `SKILL.md` instructions for agents such as Claude Code,
-Codex, and Gemini CLI. Full end-to-end behavior across those agents has not yet been independently verified.
+This installer requires Node.js/npm. The skill is intended for agents such as Claude Code,
+Codex and Gemini CLI; the complete workflow has not yet been verified across all of them.
 
 <details>
-<summary>Manual installation</summary>
+<summary>Install manually with Git</summary>
 
-From your application repository, install into the location your agent reads:
+From your application's repository, choose the directory your agent reads:
 
 ```bash
 # Claude Code
- git clone https://github.com/Robertzu43/fargate-to-cloudrun .claude/skills/fargate-to-cloudrun
+git clone https://github.com/Robertzu43/fargate-to-cloudrun .claude/skills/fargate-to-cloudrun
 
-# Codex / shared agent skills directory
- git clone https://github.com/Robertzu43/fargate-to-cloudrun .agents/skills/fargate-to-cloudrun
+# Codex / agents that read .agents/skills
+git clone https://github.com/Robertzu43/fargate-to-cloudrun .agents/skills/fargate-to-cloudrun
 ```
 
-For other agents, use their supported skill installation flow. The scripts must remain next to `SKILL.md`.
+For other agents, use their supported skill installation flow. Keep the scripts beside `SKILL.md`.
 
 </details>
 
+### 2. Open your app
+
+Open your application's repository in your coding agent. For the initial assessment, you need
+**Python 3.9+ and the AWS CLI signed in** with permission to inspect your ECS application.
+Source code helps the agent find changes that AWS configuration alone cannot reveal.
+
+You can start without a Google Cloud project. The agent helps you set up Google Cloud access,
+billing, permissions and Docker when deployment requires them.
+
+### 3. Ask for a migration
+
+```text
+Use the fargate-to-cloudrun skill to migrate this application from AWS to Cloud Run.
+
+1. Inspect my ECS services and application code. Identify dependencies and blockers.
+2. Explain the proposed changes, estimated costs and expected downtime.
+   Ask before creating billable resources or transferring secrets.
+3. Make the approved changes, deploy privately and test the critical application flows.
+   Fix failures before proposing a production switch.
+4. Show me the results and rollback plan. Ask before moving production traffic.
+5. After the switch, monitor the app and document how to deploy it again.
+   Keep AWS resources until I approve their removal.
+```
+
+If you do not know your ECS service names, the agent can look them up. It should first explain
+what it found, what needs to change, and anything that prevents the move.
+
 ## How it works
 
-| Step | The agent does | You decide |
-|---|---|---|
-| **Discover** | Reads the app, ECS configuration, images, networking, identities and dependencies. | Which application to move, if ambiguous. |
-| **Plan** | Determines what can move directly, what needs changes, and the cost/downtime implications. | Budget, acceptable downtime and consequential behavior changes. |
-| **Implement** | Updates code and infrastructure, configures Google resources, and transfers approved secrets. | Access and approval for the reviewed resource/secret-transfer scope. |
-| **Verify** | Deploys privately, tests critical application flows and fixes failures. | Whether observed results meet your business requirements. |
-| **Cut over** | Prepares and executes the actual production routing/data-writer switch, with monitoring and rollback. | Approval for the concrete production change. |
-| **Operate** | Updates deployment instructions or CI/CD and documents monitoring, costs and remaining dependencies. | When the rollback window is over and AWS resources may be retired. |
+```mermaid
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ffffff", "primaryTextColor": "#111111", "primaryBorderColor": "#111111", "lineColor": "#111111", "edgeLabelBackground": "#ffffff", "fontFamily": "Arial, sans-serif"}}}%%
+flowchart LR
+    A["Inspect AWS<br/>and app code"] --> B["Plan and make<br/>the changes"]
+    B --> C["Deploy and test<br/>on Cloud Run"]
+    C --> D["Review results<br/>and approve"]
+    D --> E["Switch production<br/>and monitor"]
+    C -->|Fix failures| B
+    classDef plain fill:#ffffff,stroke:#111111,color:#111111,stroke-width:1px
+    class A,B,C,D,E plain
+    linkStyle default stroke:#111111,stroke-width:1px,color:#111111
+```
 
-The agent keeps a `migration.md` record in your project: what it found, what changed, what it tested,
-and what happens next. It explains decisions in plain language and does not require approval for
-repeated read-only checks. You can approve a batch of destination changes; production cutover and
-AWS deletion remain separate decisions.
+The agent keeps a `migration.md` record in your project with the plan, changes, test results
+and rollback steps. Testing includes your app's critical flows—not just a responding health endpoint.
 
-## What it handles
+You approve billable resource creation and secret transfers before they happen. Switching live
+traffic and retiring AWS resources are separate approvals. AWS stays available during the agreed
+rollback window; database changes need their own recovery plan.
 
-There are two parts: **deterministic helpers for common mappings** and **an agent workflow for the
-application-specific work**. The distinction matters—an instruction to investigate is not a tested converter.
+## What it does
 
-| Area | Current capability |
+**The strongest starting point is a containerized HTTP app.** More complex applications require
+work specific to their dependencies and behavior.
+
+| Area | What is available today |
 |---|---|
-| ECS HTTP services | Inventory, field assessment, and YAML/CLI generation for the resolved single-service path. Repeat discovery per service for a multi-service app. |
-| Application changes | The agent edits source/build/configuration as needed, tests the changes, and builds the actual target image. |
-| Secrets Manager / SSM | Explicitly approved transfer helper, including JSON-key/version selectors; values stay out of terminal output and destination versions are recorded. |
-| Networking, sidecars, jobs, workers | The agent investigates current official docs and authors the appropriate configuration. These are not automatically converted by the HTTP generator. |
-| Databases, queues and storage | The agent chooses and implements an approved retain/move/replace strategy. Data migrations need engine-specific procedures, validation and rollback planning. |
-| Production cutover | Agent-executed, reviewed changes for the application's actual front door and data ownership. There is no generic cross-cloud traffic-switch command. |
-| AWS retirement | Separately approved after verification and the rollback window, with shared-resource and backup checks. |
+| ECS HTTP services | Scripts to collect configuration, identify migration issues and generate deployment files once findings are resolved. |
+| AWS secrets | A transfer helper for Secrets Manager and SSM, including selected JSON keys and versions. Secret values are not printed or written to local output files. |
+| App code and dependencies | Instructions for the agent to investigate and implement changes to code, networking, databases, queues, storage, sidecars and workers. These are not automatic conversions. |
+| Production switch | Instructions for application testing, your approval, traffic changes, monitoring and rollback. No universal cutover script. |
 
-Some workloads need a different target or architectural changes. The agent should explain the exact
-mismatch and propose an approach—not silently remove the feature or pretend Cloud Run supports it.
+Cloud Run is not a fit for every workload. The agent should explain incompatible requirements
+before proceeding. An assessment that passes is a **candidate for testing**, not proof of a completed migration.
+The generator stops when findings are unresolved instead of silently dropping requirements.
 
-## Trust and limits
+Environment values are withheld by default, but collected inventories can still contain sensitive
+information. Keep them out of Git and public issues. Cloud resources may incur charges throughout
+testing and the rollback window.
 
-**A supported field is not a migrated application.** The assessor's internal `rollup: supported` means
-its checked mappings passed. The user-facing result is **candidate for validation**. Source scanning is
-heuristic, and the inventory explicitly lists areas the agent must still investigate.
+## Documentation
 
-**The generator does not silently omit unresolved requirements.** Redacted configuration, missing
-load-balancer evidence, unsupported features and other open findings stop executable generation. The
-agent resolves them or authors and verifies the required configuration directly. It must not edit the
-original evidence or suppress findings to force a pass.
+- [Agent instructions](SKILL.md) — the workflow your coding agent follows.
+- [Migration guide](references/migration-workflow.md) — dependencies, testing, production cutover and rollback.
+- [Working example](examples/configured-api/README.md) — an app that checks configuration and authenticated requests.
+- [Mapping rules](references/rules.json) — mappings and their official sources. Documentation checks flag missing excerpts; they do not prove compatibility or catch every platform change.
 
-**Secret values stay out of the conversation.** Environment values are withheld by default. Explicit
-`--include-env NAME` options allow reviewed non-secret values. Other fields have best-effort redaction;
-inventories must still be treated as sensitive. The optional transfer helper reads only the approved
-AWS references and sends values to Google through process pipes. It writes version metadata, not values.
+<details>
+<summary>Run the helper scripts yourself</summary>
 
-**Documentation is evidence, not a proof system.** Mapping rules include official links and excerpts.
-A scheduled check detects missing excerpts; a maintainer must review and distribute updated rules.
-It does not detect every semantic platform change or automatically update installed copies. The agent
-can consult current official documentation and record decisions beyond the bundled rules.
-
-**Production completion needs functional evidence.** A health endpoint alone does not verify your
-credentials, database, queue, files, authentication or actual user flows. Cutover requires those checks,
-monitoring and a viable rollback plan. Traffic rollback alone cannot recover writes made only to a new database.
-
-**Cloud operations can cost money.** Minimum instances, databases, networks, registries, secrets and logs
-may all incur charges. The agent estimates and reviews the planned resources. Deleting the Cloud Run
-service alone does not clean up everything. Project Owner is not a prerequisite; permissions should match
-the operations being performed.
-
-## Try the helpers without cloud access
+Run these commands from a clone of this repository. Normal skill usage does not require running them manually.
 
 The fixtures exercise the local assessment and generator. They do not demonstrate a completed live migration.
 
@@ -139,7 +139,8 @@ python3 scripts/transfer_secrets.py --assessment assessment.json --project my-pr
 python3 -m unittest discover -s tests -v
 ```
 
-For an application that has secrets, executable generation requires the actual destination versions:
+For a real application with secrets, use its own `inventory.json` and `assessment.json`.
+Executable generation requires the actual destination versions:
 
 ```bash
 # Only after the user has approved the source references and destination project.
@@ -160,35 +161,23 @@ within the approved scope, then runs application-level verification. For apps wi
 See [the functional example](examples/configured-api/README.md) for a small application that distinguishes
 “the server is up” from “the required configuration and application behavior work.”
 
-## Repository map
+</details>
 
-| File | Purpose |
-|---|---|
-| [`SKILL.md`](SKILL.md) | Agent instructions from discovery through production handoff. |
-| [`references/migration-workflow.md`](references/migration-workflow.md) | Dependency investigation, implementation, testing, cutover and rollback procedures. |
-| [`scripts/inventory.py`](scripts/inventory.py) | Read-only AWS configuration collection with environment values withheld by default. |
-| [`scripts/assess.py`](scripts/assess.py) | Evidence-linked findings and explicit coverage limitations. |
-| [`scripts/generate.py`](scripts/generate.py) | Executable configuration for resolved HTTP mappings; refuses unresolved findings. |
-| [`scripts/transfer_secrets.py`](scripts/transfer_secrets.py) | Plan or explicitly perform secret-value transfers without displaying values. |
-| [`references/rules.json`](references/rules.json) | Reviewed mappings, platform constraints and source references. |
-| [`tests/`](tests/) | Regression tests for assessment, generation, secret handling and functional verification. |
+## Feedback and contributing
 
-## Contribute
+Tried a migration? [Open an issue](https://github.com/Robertzu43/fargate-to-cloudrun/issues)
+and tell us how it went. The most valuable contribution is a real migration report: what you tried, what failed,
+and a sanitized example that reproduces the problem. Never share credentials or raw inventories.
+New mappings need a current official reference and tests for both a supported and an unsupported case.
 
-The most useful contribution is evidence from a real migration: a sanitized configuration, the expected
-behavior, what failed, and the smallest reproducible test. Never attach raw inventories or credentials.
+```bash
+python3 -m unittest discover -s tests -v
+```
 
-Before proposing a new mapping, include a current official reference and tests for both its supported
-case and a case that must not pass. A fixture matching generated text is not enough to prove semantics.
-Run `python3 -m unittest discover -s tests -v`. Maintainers can check documentation excerpts with
-`python3 scripts/docdrift.py`; review any changes before writing stale flags or updating citations.
-
-Current validation goal: independent engineers migrate real applications with less manual work than the
-same agent without this skill, while finding consequential blockers and avoiding false compatibility claims.
-Until that evidence exists, the repository remains an early release.
+Maintainers can check documentation excerpts with `python3 scripts/docdrift.py`.
+Review the source documentation before changing rules or stale flags.
 
 ## License
 
-Apache 2.0. Referenced Google documentation is attributed under CC-BY 4.0 in [NOTICE](NOTICE).
-“Fargate” and “Cloud Run” describe the source and destination. This project is not affiliated with or
-endorsed by Amazon or Google.
+[Apache 2.0](LICENSE). Google documentation excerpts are attributed in [NOTICE](NOTICE).
+This project is not affiliated with or endorsed by Amazon or Google.
