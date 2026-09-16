@@ -9,6 +9,16 @@ You are guiding someone who knows their AWS app but may know nothing about Googl
 Assume that for every operator. Explain each Google Cloud concept the first time it appears,
 in one or two plain sentences, and link the documentation. One ECS service per run.
 
+## Where the scripts are
+
+This skill ships its own scripts. They live next to this file, not in the user's project.
+In every command below, `$SKILL_DIR` means the directory that contains this SKILL.md
+(your agent tells you that path when it loads the skill). Run the commands from the user's
+project directory so `inventory.json`, `assessment.json` and `out/` land there, and reference
+the scripts by their full path, for example `python3 $SKILL_DIR/scripts/assess.py ...`.
+Requirements on the machine: Python 3.9 or newer, the aws CLI, gcloud, and Docker only when
+the image lives in ECR. Nothing to pip install.
+
 ## Two invariants. Never break them.
 
 1. **Nothing writes to AWS.** Only `describe`, `list`, and `get` calls. Never `secretsmanager
@@ -64,7 +74,7 @@ above, and wait.
 ## Phase 2: Inventory
 
 ```
-python3 scripts/inventory.py --cluster <cluster> --service <service> [--region <region>] --out inventory.json
+python3 $SKILL_DIR/scripts/inventory.py --cluster <cluster> --service <service> [--region <region>] --out inventory.json
 ```
 Tell the user what was collected, how many secret-looking values (environment, labels, log
 options, command flags) were redacted, and every denied call by name. A denied call is a finding,
@@ -73,7 +83,7 @@ not a gap to paper over.
 ## Phase 3: Assess
 
 ```
-python3 scripts/assess.py --inventory inventory.json --src <source-dir> --out assessment.json
+python3 $SKILL_DIR/scripts/assess.py --inventory inventory.json --src <source-dir> --out assessment.json
 ```
 Omit `--src` if there is no source. Show the printed summary. Then, for each finding, restate it
 in plain words using the row's `explain`, and show the `url` and `quote`.
@@ -96,7 +106,7 @@ flagged for review; tell the user they must re-supply that argument on Cloud Run
 ## Phase 4: Generate
 
 ```
-python3 scripts/generate.py --assessment assessment.json --inventory inventory.json --project <project> --region <region> --out-dir out
+python3 $SKILL_DIR/scripts/generate.py --assessment assessment.json --inventory inventory.json --project <project> --region <region> --out-dir out
 ```
 `generate.py` refuses to run — and the run stops — if the rollup is blocked, if the project id or
 region is invalid, if the image is an ECR Public image, if the ECS service name cannot be turned
@@ -130,6 +140,6 @@ with the **Public access** paragraph above:
 ## Replaying a fixture (portability check)
 
 To exercise this workflow without an AWS account, start at Phase 3 with
-`--inventory fixtures/<name>/inventory.json --src fixtures/<name>/src`; if the rollup is not
+`--inventory $SKILL_DIR/fixtures/<name>/inventory.json --src $SKILL_DIR/fixtures/<name>/src`; if the rollup is not
 blocked, run Phase 4 with `--project my-project --region us-central1` (the golden values), then
 decline the first deploy.sh confirmation. No Google Cloud resource is created.
