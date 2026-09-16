@@ -1,9 +1,8 @@
 {
-  "snapshot": "2026-09-12",
   "ignore": [
     "taskDefinitionArn", "revision", "status", "registeredAt", "registeredBy", "deregisteredAt",
     "requiresAttributes", "compatibilities", "requiresCompatibilities", "family", "tags",
-    "placementConstraints", "runtimePlatform", "networkMode", "executionRoleArn",
+    "placementConstraints", "networkMode", "executionRoleArn",
     "containerDefinitions[].name", "containerDefinitions[].essential",
     "containerDefinitions[].cpu", "containerDefinitions[].memory", "containerDefinitions[].memoryReservation",
     "containerDefinitions[].logConfiguration", "containerDefinitions[].dockerLabels",
@@ -61,14 +60,26 @@
       "stale": false
     },
     {
+      "id": "container.architecture",
+      "category": "container",
+      "ecs_field": "runtimePlatform.cpuArchitecture, runtimePlatform.operatingSystemFamily",
+      "cloudrun_field": "(none)",
+      "verdict": "blocked",
+      "explain": "Cloud Run runs Linux x86_64 containers only; an ARM64 (Graviton) or Windows image must be rebuilt for x86_64 Linux before it can run.",
+      "url": "https://docs.cloud.google.com/run/docs/container-contract",
+      "quote": "Cloud Run specifically supports the Linux x86_64 ABI format.",
+      "snapshot": "2026-09-12",
+      "stale": false
+    },
+    {
       "id": "resources.cpu-memory",
       "category": "resources",
       "ecs_field": "cpu, memory (task level)",
       "cloudrun_field": "spec.template.spec.containers[].resources.limits",
       "verdict": "supported",
-      "explain": "Cloud Run sets CPU and memory per instance; the Fargate task size maps to a documented Cloud Run pair, rounding CPU up to at least 1 vCPU.",
+      "explain": "Cloud Run sets CPU and memory per instance; the Fargate task size maps to a documented Cloud Run pair, rounding CPU up to at least 1 vCPU so the sub-1-vCPU constraints never apply.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/services/cpu",
-      "quote": "The minimum vCPU setting is 0.08 vCPU.",
+      "quote": "A minimum of 0.5 vCPU is needed to set a memory limit greater than 512MiB.",
       "snapshot": "2026-09-12",
       "stale": false
     },
@@ -80,7 +91,7 @@
       "verdict": "blocked",
       "explain": "This CPU and memory pair is outside the combinations the Cloud Run documentation lists.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/services/memory-limits",
-      "quote": "Up to 4 GiB",
+      "quote": "Cloud Run instances that exceed their allowed memory limit are terminated.",
       "snapshot": "2026-09-12",
       "stale": false
     },
@@ -92,7 +103,7 @@
       "verdict": "supported",
       "explain": "The load balancer's HTTP health check path becomes a Cloud Run startup probe on the same path.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/healthchecks",
-      "quote": "You can configure HTTP, TCP, and gRPC probes using Google Cloud console, YAML, or Terraform:",
+      "quote": "Startup probes determine whether the container has started and is ready to accept traffic.",
       "snapshot": "2026-09-12",
       "stale": false
     },
@@ -116,7 +127,7 @@
       "verdict": "supported",
       "explain": "Plain environment variables carry over unchanged.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/services/environment-variables",
-      "quote": "This page describes how to configure environment variables for your Cloud Run service by using the Google Cloud console or gcloud.",
+      "quote": "You can set a maximum of 1000 environment variables for a Cloud Run service.",
       "snapshot": "2026-09-12",
       "stale": false
     },
