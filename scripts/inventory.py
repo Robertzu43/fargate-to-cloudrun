@@ -5,7 +5,8 @@ Usage:
   inventory.py --cluster CLUSTER --service SERVICE [--region REGION] [--out inventory.json]
 
 Only describe/list/get calls are made; no call ever reads a Secrets Manager secret or an
-SSM parameter value. Environment values whose key looks secret are replaced with "<redacted>".
+SSM parameter value. Values whose key or flag looks secret (environment, dockerLabels,
+logConfiguration.options, command/entryPoint flags) are replaced with "<redacted>".
 Every failed call is recorded under "denied" so nothing missing is ever assumed present.
 """
 import argparse
@@ -15,25 +16,70 @@ import re
 import subprocess
 
 SECRET_KEY = re.compile(r"(?i)(secret|token|password|passwd|api[_-]?key|private[_-]?key|credential)")
+REDACTED = "<redacted>"
 DENIED = []
 
 
 def aws(*args, region=None):
     cmd = ["aws", *args, "--output", "json"] + (["--region", region] if region else [])
     try:
+        # CLI errors may include the caller ARN; it is already in meta.identity, so nothing new is persisted.
         p = subprocess.run(cmd, capture_output=True, text=True)
     except FileNotFoundError:
         DENIED.append({"call": "aws", "error": "aws CLI not found"})
         return None
     if p.returncode != 0:
-        DENIED.append({"call": " ".join(args[:2]), "error": p.stderr.strip()[:300]})
+        DENIED.append({"call": " ".join(args[:4]), "error": p.stderr.strip()[:300]})
         return None
     return json.loads(p.stdout) if p.stdout.strip() else {}
 
 
 def redact(env):
-    return [{"name": e["name"], "value": "<redacted>" if SECRET_KEY.search(e["name"]) else e.get("value", "")}
+    return [{"name": e["name"], "value": REDACTED if SECRET_KEY.search(e["name"]) else e.get("value", "")}
             for e in env or []]
+
+
+def redact_map(m):
+    return {k: REDACTED if SECRET_KEY.search(k) else v for k, v in (m or {}).items()}
+
+
+def redact_argv(argv):
+    out = list(argv or [])
+    i = 0
+    while i < len(out):
+        a = out[i]
+        if isinstance(a, str) and a.startswith("-"):
+            flag, eq, _ = a.partition("=")
+            if SECRET_KEY.search(flag):
+                if eq:
+                    out[i] = f"{flag}={REDACTED}"
+                elif i + 1 < len(out):
+                    out[i + 1] = REDACTED
+                    i += 1
+        i += 1
+    return out
+
+
+def scrub(c):
+    """Redact secret-looking values in one container definition, in place. ARNs/names stay."""
+    if "environment" in c:
+        c["environment"] = redact(c["environment"])
+    if "dockerLabels" in c:
+        c["dockerLabels"] = redact_map(c["dockerLabels"])
+    if (c.get("logConfiguration") or {}).get("options"):
+        c["logConfiguration"]["options"] = redact_map(c["logConfiguration"]["options"])
+    for k in ("command", "entryPoint"):
+        if c.get(k):
+            c[k] = redact_argv(c[k])
+    return c
+
+
+def count_redacted(c):
+    vals = [e["value"] for e in c.get("environment", [])]
+    vals += list((c.get("dockerLabels") or {}).values())
+    vals += list(((c.get("logConfiguration") or {}).get("options") or {}).values())
+    vals += list(c.get("command") or []) + list(c.get("entryPoint") or [])
+    return sum(1 for v in vals if v == REDACTED or (isinstance(v, str) and v.endswith(f"={REDACTED}")))
 
 
 def policy_actions(doc):
@@ -68,24 +114,19 @@ def role_actions(role_arn, region):
     return sorted(set(acts))
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--cluster", required=True)
-    ap.add_argument("--service", required=True)
-    ap.add_argument("--region")
-    ap.add_argument("--out", default="inventory.json")
-    a = ap.parse_args()
-    R = a.region
-
+def collect(cluster, service, region):
+    R = region
     ident = aws("sts", "get-caller-identity", region=R) or {}
-    svcs = (aws("ecs", "describe-services", "--cluster", a.cluster, "--services", a.service, region=R) or {}).get("services", [])
+    resp = aws("ecs", "describe-services", "--cluster", cluster, "--services", service, region=R) or {}
+    for f in resp.get("failures", []):
+        DENIED.append({"call": "ecs describe-services", "error": f"{f.get('arn', service)}: {f.get('reason', 'unknown')}"})
+    svcs = resp.get("services", [])
     svc = svcs[0] if svcs else {}
     td = {}
     if svc.get("taskDefinition"):
         td = (aws("ecs", "describe-task-definition", "--task-definition", svc["taskDefinition"], region=R) or {}).get("taskDefinition", {})
     for c in td.get("containerDefinitions", []):
-        if "environment" in c:
-            c["environment"] = redact(c["environment"])
+        scrub(c)
 
     tgs = []
     arns = [lb["targetGroupArn"] for lb in svc.get("loadBalancers", []) if lb.get("targetGroupArn")]
@@ -96,17 +137,18 @@ def main():
                         "healthCheckPath": tg.get("HealthCheckPath"), "port": tg.get("Port")})
 
     sched = []
-    if svc.get("clusterArn"):
+    fam = td.get("family")
+    if svc.get("clusterArn") and fam:
+        fam_re = re.compile(rf":task-definition/{re.escape(fam)}(:\d+)?$")
         for rn in (aws("events", "list-rule-names-by-target", "--target-arn", svc["clusterArn"], region=R) or {}).get("RuleNames", []):
             targets = (aws("events", "list-targets-by-rule", "--rule", rn, region=R) or {}).get("Targets", [])
-            fam = td.get("family")
-            if fam and any(fam in (t.get("EcsParameters") or {}).get("TaskDefinitionArn", "") for t in targets):
+            if any(fam_re.search((t.get("EcsParameters") or {}).get("TaskDefinitionArn", "")) for t in targets):
                 rule = aws("events", "describe-rule", "--name", rn, region=R) or {}
                 sched.append({"name": rn, "scheduleExpression": rule.get("ScheduleExpression", "")})
 
-    inv = {
+    return {
         "meta": {"account": ident.get("Account", ""), "identity": ident.get("Arn", ""), "region": R or "",
-                 "cluster": a.cluster, "service": a.service,
+                 "cluster": cluster, "service": service,
                  "collected": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")},
         "service": {k: svc[k] for k in ("desiredCount", "launchType", "networkConfiguration", "loadBalancers") if k in svc},
         "taskDefinition": td,
@@ -116,11 +158,23 @@ def main():
         "scheduledRules": sched,
         "denied": DENIED,
     }
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--cluster", required=True)
+    ap.add_argument("--service", required=True)
+    ap.add_argument("--region")
+    ap.add_argument("--out", default="inventory.json")
+    a = ap.parse_args()
+
+    inv = collect(a.cluster, a.service, a.region)
     with open(a.out, "w") as fh:
         json.dump(inv, fh, indent=2)
-    redacted = sum(1 for c in td.get("containerDefinitions", []) for e in c.get("environment", []) if e["value"] == "<redacted>")
-    print(f"wrote {a.out}: {len(td.get('containerDefinitions', []))} container(s), {len(tgs)} target group(s), "
-          f"{len(sched)} schedule(s), {redacted} env value(s) redacted, {len(DENIED)} denied call(s)")
+    cds = inv["taskDefinition"].get("containerDefinitions", [])
+    redacted = sum(count_redacted(c) for c in cds)
+    print(f"wrote {a.out}: {len(cds)} container(s), {len(inv['targetGroups'])} target group(s), "
+          f"{len(inv['scheduledRules'])} schedule(s), {redacted} value(s) redacted, {len(DENIED)} denied call(s)")
     for d in DENIED:
         print(f"  denied: {d['call']}: {d['error'][:120]}")
 

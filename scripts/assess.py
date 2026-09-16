@@ -229,12 +229,14 @@ def assess(inv, src_dir, rulesdoc):
     if len(cds) > 1:
         others = [c.get("name", "") for c in cds if c is not ing]
         F.append(finding(R["container.multiple"], [f"containerDefinitions[] count={len(cds)}"], subject=",".join(others)))
-    if ing.get("entryPoint") or ing.get("command"):
-        F.append(finding(
-            R["container.command"],
-            [f"containerDefinitions[{ing.get('name')}].entryPoint={ing.get('entryPoint')} command={ing.get('command')}"],
-            value={"command": ing.get("entryPoint") or [], "args": ing.get("command") or []},
-        ))
+    argv = list(ing.get("entryPoint") or []) + list(ing.get("command") or [])
+    if argv:
+        ev = [f"containerDefinitions[{ing.get('name')}].entryPoint={ing.get('entryPoint')} command={ing.get('command')}"]
+        if any(a == "<redacted>" or str(a).endswith("=<redacted>") for a in argv):
+            F.append(not_covered("containerDefinitions[].command contains <redacted>", ev))
+        else:
+            F.append(finding(R["container.command"], ev,
+                             value={"command": ing.get("entryPoint") or [], "args": ing.get("command") or []}))
     for c in cds:
         drv = (c.get("logConfiguration") or {}).get("logDriver")
         if c.get("logConfiguration") and drv != "awslogs":
