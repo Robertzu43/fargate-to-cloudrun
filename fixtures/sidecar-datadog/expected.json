@@ -5,6 +5,7 @@
     {"rule": "container.image", "verdict": "supported", "subject": ""},
     {"rule": "container.multiple", "verdict": "needs-investigation", "subject": "datadog-agent"},
     {"rule": "container.port", "verdict": "supported", "subject": ""},
+    {"rule": "health.command-probe", "verdict": "needs-investigation", "subject": "web"},
     {"rule": "health.http-probe", "verdict": "supported", "subject": ""},
     {"rule": "resources.cpu-memory", "verdict": "supported", "subject": ""},
     {"rule": "scaling.min-instances", "verdict": "supported", "subject": ""},

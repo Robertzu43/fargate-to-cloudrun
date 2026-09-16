@@ -34,7 +34,7 @@ read -r -p "Press Enter once every secret above has a version... "
 # ---- Step 6: Deploy the service from service.yaml
 # gcloud run services replace applies the manifest; the first run creates the service, later runs create a new revision.
 # Docs: https://docs.cloud.google.com/run/docs/deploying
-gcloud run services replace service.yaml --region=us-central1 --project=my-project
+gcloud run services replace out/service.yaml --region=us-central1 --project=my-project
 
 # ---- Step 7: Fetch the service URL
 # Every Cloud Run service gets a stable HTTPS URL on run.app.

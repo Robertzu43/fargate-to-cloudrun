@@ -47,7 +47,7 @@ def names(service, project, region, src_image):
     }
 
 
-def generate(assessment, inv, project, region):
+def generate(assessment, inv, project, region, out_dir="out"):
     if assessment["rollup"] == "blocked":
         raise SystemExit("refusing to generate: rollup is blocked")
     if not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", project):
@@ -136,7 +136,7 @@ def generate(assessment, inv, project, region):
         step("Copy the image from ECR to Artifact Registry",
              "Cloud Run needs the image in Artifact Registry. The image is copied, not rebuilt.",
              DOCS["registry"],
-             f"docker pull {src_image}", f"docker tag {src_image} {image}", f"docker push {image}")
+             f"docker pull {shlex.quote(src_image)}", f"docker tag {shlex.quote(src_image)} {image}", f"docker push {image}")
     step("Create the runtime service account if it does not exist",
          "Every Cloud Run service runs as a Google service account, its identity when calling Google APIs. It carries no AWS credentials.",
          DOCS["identity"],
@@ -159,7 +159,7 @@ def generate(assessment, inv, project, region):
     step("Deploy the service from service.yaml",
          "gcloud run services replace applies the manifest; the first run creates the service, later runs create a new revision.",
          DOCS["deploy"],
-         f"gcloud run services replace service.yaml --region={region} {proj}")
+         f"gcloud run services replace {shlex.quote(os.path.join(out_dir, 'service.yaml'))} --region={region} {proj}")
     step("Fetch the service URL",
          "Every Cloud Run service gets a stable HTTPS URL on run.app.",
          DOCS["deploy"],
@@ -195,10 +195,12 @@ def main():
     ap.add_argument("--region", required=True)
     ap.add_argument("--out-dir", default="out")
     a = ap.parse_args()
-    assessment = json.load(open(a.assessment))
-    inv = json.load(open(a.inventory))
+    with open(a.assessment) as fh:
+        assessment = json.load(fh)
+    with open(a.inventory) as fh:
+        inv = json.load(fh)
     try:
-        yaml_text, sh_text = generate(assessment, inv, a.project, a.region)
+        yaml_text, sh_text = generate(assessment, inv, a.project, a.region, a.out_dir)
     except SystemExit as e:
         print(e)
         raise SystemExit(2)
