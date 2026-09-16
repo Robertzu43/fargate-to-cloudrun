@@ -1,0 +1,13 @@
+{
+  "rollup": "needs-investigation",
+  "findings": [
+    {"rule": "config.env", "verdict": "supported", "subject": ""},
+    {"rule": "container.image", "verdict": "supported", "subject": ""},
+    {"rule": "container.port", "verdict": "supported", "subject": ""},
+    {"rule": "health.http-probe", "verdict": "supported", "subject": ""},
+    {"rule": "resources.cpu-memory", "verdict": "supported", "subject": ""},
+    {"rule": "scaling.min-instances", "verdict": "supported", "subject": ""},
+    {"rule": "storage.efs", "verdict": "needs-investigation", "subject": "data"},
+    {"rule": "timeout.request", "verdict": "supported", "subject": ""}
+  ]
+}
