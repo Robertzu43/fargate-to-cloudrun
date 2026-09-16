@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Collect one ECS service's configuration with read-only aws CLI calls. Standard library only.
+
+Usage:
+  inventory.py --cluster CLUSTER --service SERVICE [--region REGION] [--out inventory.json]
+
+Only describe/list/get calls are made; no call ever reads a Secrets Manager secret or an
+SSM parameter value. Environment values whose key looks secret are replaced with "<redacted>".
+Every failed call is recorded under "denied" so nothing missing is ever assumed present.
+"""
+import argparse
+import datetime
+import json
+import re
+import subprocess
+
+SECRET_KEY = re.compile(r"(?i)(secret|token|password|passwd|api[_-]?key|private[_-]?key|credential)")
+DENIED = []
+
+
+def aws(*args, region=None):
+    cmd = ["aws", *args, "--output", "json"] + (["--region", region] if region else [])
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True)
+    except FileNotFoundError:
+        DENIED.append({"call": "aws", "error": "aws CLI not found"})
+        return None
+    if p.returncode != 0:
+        DENIED.append({"call": " ".join(args[:2]), "error": p.stderr.strip()[:300]})
+        return None
+    return json.loads(p.stdout) if p.stdout.strip() else {}
+
+
+def redact(env):
+    return [{"name": e["name"], "value": "<redacted>" if SECRET_KEY.search(e["name"]) else e.get("value", "")}
+            for e in env or []]
+
+
+def policy_actions(doc):
+    stmts = doc.get("Statement", [])
+    if isinstance(stmts, dict):
+        stmts = [stmts]
+    acts = []
+    for st in stmts:
+        if st.get("Effect") != "Allow":
+            continue
+        a = st.get("Action", [])
+        acts += a if isinstance(a, list) else [a]
+    return sorted(set(acts))
+
+
+def role_actions(role_arn, region):
+    if not role_arn:
+        return []
+    name = role_arn.split("/")[-1]
+    acts = []
+    for pn in (aws("iam", "list-role-policies", "--role-name", name, region=region) or {}).get("PolicyNames", []):
+        d = aws("iam", "get-role-policy", "--role-name", name, "--policy-name", pn, region=region)
+        if d:
+            acts += policy_actions(d["PolicyDocument"])
+    for ap in (aws("iam", "list-attached-role-policies", "--role-name", name, region=region) or {}).get("AttachedPolicies", []):
+        pol = aws("iam", "get-policy", "--policy-arn", ap["PolicyArn"], region=region)
+        if not pol:
+            continue
+        v = aws("iam", "get-policy-version", "--policy-arn", ap["PolicyArn"], "--version-id", pol["Policy"]["DefaultVersionId"], region=region)
+        if v:
+            acts += policy_actions(v["PolicyVersion"]["Document"])
+    return sorted(set(acts))
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--cluster", required=True)
+    ap.add_argument("--service", required=True)
+    ap.add_argument("--region")
+    ap.add_argument("--out", default="inventory.json")
+    a = ap.parse_args()
+    R = a.region
+
+    ident = aws("sts", "get-caller-identity", region=R) or {}
+    svcs = (aws("ecs", "describe-services", "--cluster", a.cluster, "--services", a.service, region=R) or {}).get("services", [])
+    svc = svcs[0] if svcs else {}
+    td = {}
+    if svc.get("taskDefinition"):
+        td = (aws("ecs", "describe-task-definition", "--task-definition", svc["taskDefinition"], region=R) or {}).get("taskDefinition", {})
+    for c in td.get("containerDefinitions", []):
+        if "environment" in c:
+            c["environment"] = redact(c["environment"])
+
+    tgs = []
+    arns = [lb["targetGroupArn"] for lb in svc.get("loadBalancers", []) if lb.get("targetGroupArn")]
+    if arns:
+        for tg in (aws("elbv2", "describe-target-groups", "--target-group-arns", *arns, region=R) or {}).get("TargetGroups", []):
+            tgs.append({"targetGroupArn": tg["TargetGroupArn"], "protocol": tg.get("Protocol"),
+                        "healthCheckProtocol": tg.get("HealthCheckProtocol"),
+                        "healthCheckPath": tg.get("HealthCheckPath"), "port": tg.get("Port")})
+
+    sched = []
+    if svc.get("clusterArn"):
+        for rn in (aws("events", "list-rule-names-by-target", "--target-arn", svc["clusterArn"], region=R) or {}).get("RuleNames", []):
+            targets = (aws("events", "list-targets-by-rule", "--rule", rn, region=R) or {}).get("Targets", [])
+            fam = td.get("family")
+            if fam and any(fam in (t.get("EcsParameters") or {}).get("TaskDefinitionArn", "") for t in targets):
+                rule = aws("events", "describe-rule", "--name", rn, region=R) or {}
+                sched.append({"name": rn, "scheduleExpression": rule.get("ScheduleExpression", "")})
+
+    inv = {
+        "meta": {"account": ident.get("Account", ""), "identity": ident.get("Arn", ""), "region": R or "",
+                 "cluster": a.cluster, "service": a.service,
+                 "collected": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")},
+        "service": {k: svc[k] for k in ("desiredCount", "launchType", "networkConfiguration", "loadBalancers") if k in svc},
+        "taskDefinition": td,
+        "targetGroups": tgs,
+        "taskRoleActions": role_actions(td.get("taskRoleArn"), R),
+        "executionRoleActions": role_actions(td.get("executionRoleArn"), R),
+        "scheduledRules": sched,
+        "denied": DENIED,
+    }
+    with open(a.out, "w") as fh:
+        json.dump(inv, fh, indent=2)
+    redacted = sum(1 for c in td.get("containerDefinitions", []) for e in c.get("environment", []) if e["value"] == "<redacted>")
+    print(f"wrote {a.out}: {len(td.get('containerDefinitions', []))} container(s), {len(tgs)} target group(s), "
+          f"{len(sched)} schedule(s), {redacted} env value(s) redacted, {len(DENIED)} denied call(s)")
+    for d in DENIED:
+        print(f"  denied: {d['call']}: {d['error'][:120]}")
+
+
+if __name__ == "__main__":
+    main()

@@ -11,6 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import assess  # noqa: E402
 import generate  # noqa: E402
+import inventory  # noqa: E402
 
 FIXTURES = os.path.join(ROOT, "fixtures")
 EXEMPT = {"denied", "source-unavailable", "not-covered"}
@@ -361,6 +362,22 @@ class TestGenerate(unittest.TestCase):
         for project, region in (("My Project", "us-central1"), ("my-project", "$REGION"), ("my-project", "us-central")):
             with self.assertRaises(SystemExit):
                 gen(project=project, region=region)
+
+
+class TestInventoryHelpers(unittest.TestCase):
+    def test_redact_matches_secret_like_keys(self):
+        env = [{"name": "APP_ENV", "value": "prod"}, {"name": "DB_PASSWORD", "value": "x"},
+               {"name": "Api-Key", "value": "y"}, {"name": "PRIVATE_KEY_PATH", "value": "/k"}]
+        out = inventory.redact(env)
+        self.assertEqual([e["value"] for e in out], ["prod", "<redacted>", "<redacted>", "<redacted>"])
+
+    def test_policy_actions_flattens_allow_statements(self):
+        doc = {"Statement": [
+            {"Effect": "Allow", "Action": ["sqs:ReceiveMessage", "sqs:DeleteMessage"], "Resource": "*"},
+            {"Effect": "Allow", "Action": "s3:GetObject", "Resource": "*"},
+            {"Effect": "Deny", "Action": "iam:*", "Resource": "*"},
+        ]}
+        self.assertEqual(inventory.policy_actions(doc), ["s3:GetObject", "sqs:DeleteMessage", "sqs:ReceiveMessage"])
 
 
 if __name__ == "__main__":
