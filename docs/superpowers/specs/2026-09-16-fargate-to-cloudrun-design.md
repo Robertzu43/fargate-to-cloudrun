@@ -2,7 +2,7 @@
 
 Date: 2026-09-16
 Status: implemented on branch feat/v1; see plan for review history
-License: Apache 2.0. Public GitHub repo. No Google or AWS marks in name or logo.
+License: Apache 2.0. Public GitHub repo. The project name uses 'Fargate' and 'Cloud Run' descriptively to say what the tool does (nominative use). No logos, and no suggestion of affiliation or endorsement. NOTICE disclaims both companies' marks.
 
 ## 1. Purpose
 
@@ -415,6 +415,6 @@ publishing a tool derived from that experience, with none of its configuration o
 
 - Repo: Apache 2.0.
 - Adapted Google Cloud documentation: CC-BY 4.0 attribution in `NOTICE`, applying to adapted
-  content as well as quotes. Google trademarks are excluded from that license and are not used
-  in the project name or logo.
+  content as well as quotes. Google trademarks are excluded from that license.
+- The project name uses 'Fargate' and 'Cloud Run' descriptively to say what the tool does (nominative use). No logos, and no suggestion of affiliation or endorsement. NOTICE disclaims both companies' marks.
 - Fixtures are synthetic. No client configuration or code.
