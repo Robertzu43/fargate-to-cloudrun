@@ -338,7 +338,7 @@ Every quote below was copied verbatim from the docs corpus snapshot of 2026-09-1
 }
 ```
 
-- [ ] **Step 2: Validate it parses and has 17 rules**
+- [ ] **Step 2: Validate it parses and has 18 rules**
 
 ```bash
 python3 -c "import json; d=json.load(open('references/rules.json')); print(len(d['rules']), len(d['ignore']))"
@@ -884,7 +884,8 @@ def scan(src_dir):
                 continue
             path = os.path.join(root, fn)
             try:
-                lines = open(path, encoding="utf-8", errors="ignore").read().splitlines()
+                with open(path, encoding="utf-8", errors="ignore") as fh:
+                    lines = fh.read().splitlines()
             except OSError:
                 continue
             for i, line in enumerate(lines, 1):
