@@ -1,7 +1,7 @@
 # fargate-to-cloudrun: design
 
 Date: 2026-09-16
-Status: draft for review (revision 3)
+Status: ready for user review (revision 4)
 License: Apache 2.0. Public GitHub repo. No Google or AWS marks in name or logo.
 
 ## 1. Purpose
@@ -66,7 +66,7 @@ fargate-to-cloudrun/
     long-running-batch/     # blocked (service) -> jobs
     denied-permission/      # blocked: incomplete inventory
   tests/
-    test_assess.py          # verdict equality per fixture, no-false-pass, every finding cited
+    test_assess.py          # verdict equality, no-false-pass, citation on Cloud Run findings, golden generate
   .github/workflows/
     docdrift.yml            # weekly cron: run docdrift.py, fail on stale rows
   README.md
@@ -148,8 +148,9 @@ paragraph with its docs URL in SKILL.md. Never from memory, never from web searc
   walk the tree, match AWS SDK imports and client constructors per language (boto3/botocore,
   @aws-sdk/*, aws-sdk, github.com/aws/aws-sdk-go*, software.amazon.awssdk, AWSSDK.*), record
   service name and file:line.
-- Present findings grouped: supported, needs-investigation, blocked. Every finding shows rule id,
-  evidence (inventory path or file:line), docs URL, quoted sentence.
+- Present findings grouped: supported, needs-investigation, blocked. Every finding shows its
+  evidence (inventory path or file:line). Findings from a rule row also show rule id, docs URL,
+  and quoted sentence. Findings with a `reason` show the reason instead.
 - Rollup `blocked`: explain what would unblock it and stop. No generation, no deploy.
 - Rollup `needs-investigation`: list the items the user must verify, then ask whether to continue.
   Every finding whose verdict is not `supported` is omitted from the manifest with an explicit
@@ -178,9 +179,28 @@ paragraph with its docs URL in SKILL.md. Never from memory, never from web searc
 
 ### Grounding rule
 Every row in `rules.json` carries URL, quoted sentence, and snapshot date. `assess.py` copies those
-fields into every finding. The agent answers Cloud Run behavior questions only from `rules.json`.
-If not covered there, the finding is needs-investigation with reason
-`not covered by referenced documentation`; the agent says so and does not search the web.
+fields into every finding it derives from a row. The agent answers Cloud Run behavior questions
+only from `rules.json`. If the user asks about something no row covers, the agent says
+"not covered by the referenced documentation" and does not search the web.
+
+### Unmatched ECS fields
+`assess.py` walks every field of the task definition and service. A field that matches no rule
+row and is not on the ignore list produces a needs-investigation finding with reason `not-covered`
+and the field path as evidence. `rules.json` has a top-level `ignore` array of field paths that
+are known to have no Cloud Run consequence (for example `registeredAt`, `tags`, `family`).
+Silently skipping a field is never allowed; this is the second half of "missing evidence can
+never produce `supported`".
+
+### Reason enumeration
+`reason` is one of four slugs. Findings with the first three come from no rule row and carry no
+`url`/`quote`; `stale` comes from a row and keeps both.
+
+| reason | verdict | source |
+|---|---|---|
+| `denied` | blocked | AWS inventory call refused |
+| `source-unavailable` | needs-investigation | no source tree to scan |
+| `not-covered` | needs-investigation | ECS field matches no row and is not ignored |
+| `stale` | needs-investigation | a `supported` row whose citation failed drift |
 
 ### Verdicts
 Per finding:
@@ -194,14 +214,9 @@ Per finding:
 Split rule: denied AWS call -> `blocked`. Missing source tree -> `needs-investigation`.
 Service rollup = worst finding. Missing evidence can never produce `supported`.
 
-Two finding types are about AWS evidence, not Cloud Run behavior, and come from no rule row:
-`blocked` for a denied AWS call and `needs-investigation` for an unavailable source tree. They
-carry a `reason` field (`denied` or `source-unavailable`) and no `url`/`quote`. Every finding
-that makes a claim about Cloud Run comes from a rule row and carries both.
-
 A `supported` row with `stale: true` downgrades its finding to needs-investigation with reason
-`citation stale, pending review`. Stale never changes a `blocked` or `needs-investigation` row;
-those stay as they are until the maintainer reviews them.
+`stale`. Stale never changes a `blocked` or `needs-investigation` row; those stay as they are
+until the maintainer reviews them. See the reason enumeration above for the full set.
 
 ### Rule categories (v1)
 Each row sourced from the Cloud Run docs corpus:
@@ -209,7 +224,9 @@ Each row sourced from the Cloud Run docs corpus:
 1. Container shape: single vs multiple containers; PORT; image registry.
 2. Resources: CPU and memory vs documented limits and allowed combinations.
 3. Health checks: ECS container health check -> startup and liveness probes.
-4. Networking: ALB listener rules / target group paths / private subnets -> ingress, Direct VPC egress, connectors.
+4. Networking: ALB listener rules / target group paths -> ingress. Private subnets -> a
+   needs-investigation finding citing the Direct VPC egress page; v1 has no Google Cloud VPC to
+   target, so `generate.py` emits it as `# OMITTED`.
 5. Storage: EFS mounts -> NFS volumes; quote no-lock and mount-timeout caveats.
 6. Secrets and config: Secrets Manager / SSM references -> Secret Manager.
 7. AWS dependencies: for each AWS service named in (task-role policy actions ∪ SDK clients found
@@ -218,14 +235,19 @@ Each row sourced from the Cloud Run docs corpus:
    `ssm:GetParameters`, `kms:Decrypt`) are ECS plumbing that Cloud Run replaces.
 8. Workload type: HTTP service / scheduled task / queue consumer -> service / job / worker pool.
    Non-HTTP shapes are `blocked` for a service and point at the correct resource type.
-9. Timeouts: request timeout and stop timeout as field mappings. `desiredCount` -> `min-instances`
-   is a mapping row whose `explain` carries the scale-to-zero and CPU-allocation note; it appears
-   as a comment in `service.yaml`, not as a separate finding.
+9. Scaling and timeout: `desiredCount` -> `min-instances` is an ordinary mapping row that produces
+   a `supported` finding; its `explain` carries the scale-to-zero and CPU-allocation note, which
+   `generate.py` folds into the comment on that line. Request timeout has no ECS source field in
+   the v1 inventory; `generate.py` emits the documented default (the docs: "The timeout is set by
+   default to 5 minutes (300 seconds) and can be extended up to 60 minutes") with that citation
+   as the comment. ALB idle timeout is not collected in v1.
 
 ### Doc drift
 `docdrift.py` is a maintainer tool. A weekly GitHub Actions cron runs it; it re-fetches each
-cited page, sets `stale: true` on any row whose quoted sentence is gone, and exits nonzero if
-anything changed. It is never run during the guided workflow and the skill never invokes it.
+cited page and exits nonzero, printing the affected row ids, if any quoted sentence is gone. It
+writes nothing in CI; the maintainer sets `stale: true` on those rows in a commit and reviews them.
+Run locally with `--write` it flips the flags in place. It is never run during the guided workflow
+and the skill never invokes it.
 
 ## 7. Generation and staging deploy
 
@@ -237,29 +259,38 @@ It performs no network calls and is fixture-replayable.
 
 ### Generated artifacts
 - `service.yaml`: Cloud Run service manifest in the documented YAML format. Image, PORT, CPU,
-  memory, env vars, secret references, probes, min/max instances, concurrency, timeout, VPC egress
-  if the inventory showed private subnets. Every value carries a comment naming its source ECS
-  field and the rule id it came from.
-- `deploy.sh`: numbered steps, one command each. Each step's comment block holds a one-line
-  purpose, a one-sentence plain-language explanation of the Google Cloud concept involved, and the
-  docs URL. Steps, in order:
-  1. enable APIs
-  2. create Artifact Registry repo
-  3. `docker pull` from ECR, `docker tag`, `docker push` to Artifact Registry
-  4. create the runtime service account
-  5. create each Secret Manager secret as an empty shell
-  6. grant the runtime service account `roles/secretmanager.secretAccessor` on each secret
+  memory, env vars, secret references, probes, min/max instances, concurrency, timeout. Every
+  value carries a comment naming its source ECS field and the rule id it came from.
+- `deploy.sh`: numbered steps, one confirmation per step. A step may hold more than one shell
+  command when they are inseparable (the three docker commands, a check-then-create). Each step's
+  comment block holds a one-line purpose, a one-sentence plain-language explanation of the Google
+  Cloud concept involved, and the docs URL. Steps, in order:
+  1. enable APIs (run, artifactregistry, secretmanager)
+  2. create Artifact Registry repo (check-then-create; re-runs must not dead-end)
+  3. `aws ecr get-login-password | docker login` to ECR (read-only AWS; obtains a pull token)
+  4. `gcloud auth configure-docker <region>-docker.pkg.dev` (edits local Docker config only)
+  5. `docker pull` from ECR, `docker tag`, `docker push` to Artifact Registry
+  6. create the runtime service account (check-then-create)
+  7. create each Secret Manager secret as an empty shell (check-then-create)
+  8. grant the runtime service account `roles/secretmanager.secretAccessor` on each secret
      (the docs: "To allow Cloud Run to access the secret, the service identity must have the
      following role: Secret Manager Secret Accessor")
-  7. **pause**: print the `gcloud secrets versions add <name> --data-file=-` command for each
+  9. **pause**: print the `gcloud secrets versions add <name> --data-file=-` command for each
      secret and wait until the user confirms every value is in place. The manifest pins each
      reference to version `1`, not `latest` (the docs: environment-variable secrets "are resolved
      at instance startup time", and Google recommends pinning a version). The agent never
      sees or handles the values.
-  8. `gcloud run services replace service.yaml`
-  9. fetch URL
-  10. curl smoke
-  11. tail logs
+  10. `gcloud run services replace service.yaml`
+  11. fetch URL
+  12. curl smoke, authenticated: `curl -sf --retry 5 -H "Authorization: Bearer $(gcloud auth
+      print-identity-token)" <url><path>`. The staging service stays private; no `allUsers`
+      invoker grant. The docs require the Cloud Run Invoker role for callers, and the deploying
+      user already holds it as project owner. If the user wants a public URL, that is a separate,
+      explained confirmation after the smoke test, not part of deploy.sh.
+  13. `gcloud run services logs read --limit 20`
+
+  Every step that creates a Google Cloud resource is idempotent on re-run (describe, then create
+  only if absent), so a second staging attempt never stops on "already exists".
 
 ### Image handling
 Docker only. No rebuild. Pullability is not assessed in advance; the pull step fails and stops
@@ -284,7 +315,7 @@ Fixtures need no flag: `assess.py --inventory fixtures/<name>/inventory.json --s
 ### Fixtures
 | Fixture | Contents | Expected rollup |
 |---|---|---|
-| stateless-http | one container, PORT, HTTP health check, env vars, one Secrets Manager ref, task role with no policy actions, execution role with ECR/logs/GetSecretValue | supported (demo; only fixture that deploys) |
+| stateless-http | one container, PORT, HTTP health check, env vars, one Secrets Manager ref, task role with no policy actions, execution role with ECR/logs/GetSecretValue. Image is Google's public sample `us-docker.pkg.dev/cloudrun/container/hello`, so steps 3 and 5 are skipped for this fixture and the golden `deploy.sh` reflects that. | supported (demo; only fixture that deploys) |
 | sidecar-datadog | two containers | needs-investigation (multi-container docs quoted) |
 | efs-mount | EFS volume | needs-investigation (NFS no-lock, mount timeout quoted) |
 | sqs-worker | no port, task role with sqs:ReceiveMessage, source calls SQS | blocked for service -> worker pools; needs-investigation for SQS dependency |
@@ -295,7 +326,8 @@ Fixtures need no flag: `assess.py --inventory fixtures/<name>/inventory.json --s
 `test_assess.py`, four assertions:
 1. For every fixture, produced verdicts == `expected.json` exactly.
 2. No fixture other than `stateless-http` rolls up to `supported`.
-3. Every finding without a `reason` in `{denied, source-unavailable}` has a non-empty `url` and `quote`.
+3. Every finding without a `reason` in `{denied, source-unavailable, not-covered}` has a
+   non-empty `url` and `quote`.
 4. `generate.py` on `stateless-http` produces `service.yaml` and `deploy.sh` byte-identical to
    `fixtures/stateless-http/golden/`. This pins the step order, including the IAM grant and the
    secret-version pause before the replace.
@@ -308,8 +340,10 @@ Baseline arm: same agent, no skill, same ECS service and source, a link to the C
 
 **Portability check (untimed):** run the `stateless-http` and `sqs-worker` fixtures through the
 guided workflow in each of the three agents once, starting at Phase 3 with the fixture's
-`inventory.json` (SKILL.md carries a one-line replay instruction for this). Confirms the workflow,
-confirmations, and explanations behave the same. Script output is already proven by
+`inventory.json` (SKILL.md carries a one-line replay instruction for this). The run proceeds
+through Phase 4 and stops by declining the first deploy.sh confirmation; no Google Cloud resource
+is created during the portability check. Confirms the workflow, confirmations, and explanations
+behave the same. Script output is already proven by
 `test_assess.py`; this checks the agent-facing part only.
 
 **Timed matrix:**
