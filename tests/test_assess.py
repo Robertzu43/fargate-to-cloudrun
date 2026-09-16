@@ -7,6 +7,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import assess  # noqa: E402
+import generate  # noqa: E402
 
 FIXTURES = os.path.join(ROOT, "fixtures")
 EXEMPT = {"denied", "source-unavailable", "not-covered"}
@@ -226,6 +227,29 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(scanned, 2)
         self.assertEqual(sorted(hits), ["dynamodb", "s3", "sqs"])
         self.assertEqual(hits["s3"], ["a.py:2"])
+
+
+class TestGenerate(unittest.TestCase):
+    def test_golden_stateless_http(self):
+        inv, findings, roll = run_fixture("stateless-http")
+        assessment = {"meta": inv["meta"], "rollup": roll, "findings": findings}
+        yaml_text, sh_text = generate.generate(assessment, inv, "my-project", "us-central1")
+        g = os.path.join(FIXTURES, "stateless-http", "golden")
+        with open(os.path.join(g, "service.yaml")) as fh:
+            self.assertEqual(yaml_text, fh.read())
+        with open(os.path.join(g, "deploy.sh")) as fh:
+            self.assertEqual(sh_text, fh.read())
+
+    def test_refuses_blocked(self):
+        inv, findings, roll = run_fixture("sqs-worker")
+        with self.assertRaises(SystemExit):
+            generate.generate({"meta": inv["meta"], "rollup": roll, "findings": findings}, inv, "p", "r")
+
+    def test_omits_non_supported(self):
+        inv, findings, roll = run_fixture("efs-mount")
+        yaml_text, _ = generate.generate({"meta": inv["meta"], "rollup": roll, "findings": findings}, inv, "p", "us-central1")
+        self.assertIn("# OMITTED: data — see finding storage.efs", yaml_text)
+        self.assertNotIn("nfs:", yaml_text)
 
 
 if __name__ == "__main__":
