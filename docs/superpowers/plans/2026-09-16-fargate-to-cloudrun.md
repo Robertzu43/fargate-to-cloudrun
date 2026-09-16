@@ -21,7 +21,7 @@
 | File | Responsibility |
 |---|---|
 | `SKILL.md` | Trigger, invariants, the five phases, guided-mode rule, preflight paragraphs, fixture replay line |
-| `references/rules.json` | Single source of truth: every mapping row and blocker rule with url + quote + snapshot + stale, plus the `ignore` list of ECS fields with no Cloud Run consequence |
+| `references/rules.json` | Single source of truth (18 rules): every mapping row and blocker rule with url + quote + snapshot + stale, plus the `ignore` list of ECS fields with no Cloud Run consequence |
 | `scripts/inventory.py` | Read-only aws CLI calls → normalized `inventory.json`; redaction; denied-call recording |
 | `scripts/assess.py` | Loads rules, runs one check per rule id, scans source for AWS SDK clients, walks unmatched fields → `assessment.json` |
 | `scripts/generate.py` | `assessment.json` + `inventory.json` → `service.yaml` + `deploy.sh`; refuses on blocked; emits supported only |
@@ -106,11 +106,10 @@ Every quote below was copied verbatim from the docs corpus snapshot of 2026-09-1
 
 ```json
 {
-  "snapshot": "2026-09-12",
   "ignore": [
     "taskDefinitionArn", "revision", "status", "registeredAt", "registeredBy", "deregisteredAt",
     "requiresAttributes", "compatibilities", "requiresCompatibilities", "family", "tags",
-    "placementConstraints", "runtimePlatform", "networkMode", "executionRoleArn",
+    "placementConstraints", "networkMode", "executionRoleArn",
     "containerDefinitions[].name", "containerDefinitions[].essential",
     "containerDefinitions[].cpu", "containerDefinitions[].memory", "containerDefinitions[].memoryReservation",
     "containerDefinitions[].logConfiguration", "containerDefinitions[].dockerLabels",
@@ -168,14 +167,26 @@ Every quote below was copied verbatim from the docs corpus snapshot of 2026-09-1
       "stale": false
     },
     {
+      "id": "container.architecture",
+      "category": "container",
+      "ecs_field": "runtimePlatform.cpuArchitecture, runtimePlatform.operatingSystemFamily",
+      "cloudrun_field": "(none)",
+      "verdict": "blocked",
+      "explain": "Cloud Run runs Linux x86_64 containers only; an ARM64 (Graviton) or Windows image must be rebuilt for x86_64 Linux before it can run.",
+      "url": "https://docs.cloud.google.com/run/docs/container-contract",
+      "quote": "Cloud Run specifically supports the Linux x86_64 ABI format.",
+      "snapshot": "2026-09-12",
+      "stale": false
+    },
+    {
       "id": "resources.cpu-memory",
       "category": "resources",
       "ecs_field": "cpu, memory (task level)",
       "cloudrun_field": "spec.template.spec.containers[].resources.limits",
       "verdict": "supported",
-      "explain": "Cloud Run sets CPU and memory per instance; the Fargate task size maps to a documented Cloud Run pair, rounding CPU up to at least 1 vCPU.",
+      "explain": "Cloud Run sets CPU and memory per instance; the Fargate task size maps to a documented Cloud Run pair, rounding CPU up to at least 1 vCPU so the sub-1-vCPU constraints never apply.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/services/cpu",
-      "quote": "The minimum vCPU setting is 0.08 vCPU.",
+      "quote": "A minimum of 0.5 vCPU is needed to set a memory limit greater than 512MiB.",
       "snapshot": "2026-09-12",
       "stale": false
     },
@@ -187,7 +198,7 @@ Every quote below was copied verbatim from the docs corpus snapshot of 2026-09-1
       "verdict": "blocked",
       "explain": "This CPU and memory pair is outside the combinations the Cloud Run documentation lists.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/services/memory-limits",
-      "quote": "Up to 4 GiB",
+      "quote": "Cloud Run instances that exceed their allowed memory limit are terminated.",
       "snapshot": "2026-09-12",
       "stale": false
     },
@@ -199,7 +210,7 @@ Every quote below was copied verbatim from the docs corpus snapshot of 2026-09-1
       "verdict": "supported",
       "explain": "The load balancer's HTTP health check path becomes a Cloud Run startup probe on the same path.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/healthchecks",
-      "quote": "You can configure HTTP, TCP, and gRPC probes using Google Cloud console, YAML, or Terraform:",
+      "quote": "Startup probes determine whether the container has started and is ready to accept traffic.",
       "snapshot": "2026-09-12",
       "stale": false
     },
@@ -223,7 +234,7 @@ Every quote below was copied verbatim from the docs corpus snapshot of 2026-09-1
       "verdict": "supported",
       "explain": "Plain environment variables carry over unchanged.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/services/environment-variables",
-      "quote": "This page describes how to configure environment variables for your Cloud Run service by using the Google Cloud console or gcloud.",
+      "quote": "You can set a maximum of 1000 environment variables for a Cloud Run service.",
       "snapshot": "2026-09-12",
       "stale": false
     },
@@ -332,13 +343,13 @@ Every quote below was copied verbatim from the docs corpus snapshot of 2026-09-1
 ```bash
 python3 -c "import json; d=json.load(open('references/rules.json')); print(len(d['rules']), len(d['ignore']))"
 ```
-Expected: `17 28`
+Expected: `18 27`
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add references/rules.json
-git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "feat: rules.json with 17 cited Cloud Run rules and ECS ignore list
+git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "feat: rules.json with 18 cited Cloud Run rules and ECS ignore list
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -436,7 +447,7 @@ HTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8080"))), H).serve_forever()
 
 - [ ] **Step 2: fixtures/sidecar-datadog**
 
-Copy `stateless-http/inventory.json`, change `meta.service` to `"web-dd"`, remove the `secrets` key from the web container, and add a second container:
+Copy `stateless-http/inventory.json`, change `meta.service` to `"web-dd"`, remove the `secrets` key from the web container, remove `"secretsmanager:GetSecretValue"` from `executionRoleActions`, and add a second container:
 ```json
 {
   "name": "datadog-agent",
@@ -467,7 +478,7 @@ Copy `src/app.py` unchanged.
 
 - [ ] **Step 3: fixtures/efs-mount**
 
-Copy `stateless-http/inventory.json`, set `meta.service` to `"web-efs"`, remove `secrets`, add to `taskDefinition`:
+Copy `stateless-http/inventory.json`, set `meta.service` to `"web-efs"`, remove `secrets` and `"secretsmanager:GetSecretValue"` from `executionRoleActions`, add to `taskDefinition`:
 ```json
 "volumes": [{"name": "data", "efsVolumeConfiguration": {"fileSystemId": "fs-0123456789abcdef0", "rootDirectory": "/"}}]
 ```
@@ -629,14 +640,21 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import assess  # noqa: E402
 
 FIXTURES = os.path.join(ROOT, "fixtures")
-RULES = json.load(open(os.path.join(ROOT, "references", "rules.json")))
 EXEMPT = {"denied", "source-unavailable", "not-covered"}
 
 
+def load(*parts):
+    with open(os.path.join(ROOT, *parts)) as fh:
+        return json.load(fh)
+
+
+RULES = load("references", "rules.json")
+FIXTURE_NAMES = sorted(n for n in os.listdir(FIXTURES) if os.path.isdir(os.path.join(FIXTURES, n)))
+
+
 def run_fixture(name):
-    d = os.path.join(FIXTURES, name)
-    inv = json.load(open(os.path.join(d, "inventory.json")))
-    findings = assess.assess(inv, os.path.join(d, "src"), RULES)
+    inv = load("fixtures", name, "inventory.json")
+    findings = assess.assess(inv, os.path.join(FIXTURES, name, "src"), RULES)
     return inv, findings, assess.rollup(findings)
 
 
@@ -649,39 +667,58 @@ def simplify(findings):
 
 class TestVerdicts(unittest.TestCase):
     def test_every_fixture_matches_expected(self):
-        for name in sorted(os.listdir(FIXTURES)):
+        for name in FIXTURE_NAMES:
             with self.subTest(fixture=name):
-                expected = json.load(open(os.path.join(FIXTURES, name, "expected.json")))
+                expected = load("fixtures", name, "expected.json")
                 _, findings, roll = run_fixture(name)
                 self.assertEqual(roll, expected["rollup"])
                 self.assertEqual(simplify(findings), expected["findings"])
 
     def test_no_false_pass(self):
-        for name in sorted(os.listdir(FIXTURES)):
-            if name == "stateless-http":
+        for name in FIXTURE_NAMES:
+            expected = load("fixtures", name, "expected.json")
+            if expected["rollup"] == "supported":
                 continue
             with self.subTest(fixture=name):
                 _, _, roll = run_fixture(name)
                 self.assertNotEqual(roll, "supported")
 
     def test_every_cloud_run_finding_is_cited(self):
-        for name in sorted(os.listdir(FIXTURES)):
-            _, findings, _ = run_fixture(name)
-            for f in findings:
-                if f.get("reason") in EXEMPT:
-                    continue
-                with self.subTest(fixture=name, rule=f["rule"]):
-                    self.assertTrue(f.get("url"), "missing url")
-                    self.assertTrue(f.get("quote"), "missing quote")
+        for name in FIXTURE_NAMES:
+            with self.subTest(fixture=name):
+                _, findings, _ = run_fixture(name)
+                for f in findings:
+                    if f.get("reason") in EXEMPT:
+                        continue
+                    with self.subTest(rule=f["rule"]):
+                        self.assertTrue(f.get("url"), "missing url")
+                        self.assertTrue(f.get("quote"), "missing quote")
+
+    def test_arm64_or_windows_is_blocked(self):
+        for rp in ({"cpuArchitecture": "ARM64", "operatingSystemFamily": "LINUX"},
+                   {"cpuArchitecture": "X86_64", "operatingSystemFamily": "WINDOWS_SERVER_2022_CORE"}):
+            with self.subTest(runtimePlatform=rp):
+                inv = load("fixtures", "stateless-http", "inventory.json")
+                inv["taskDefinition"]["runtimePlatform"] = rp
+                findings = assess.assess(inv, os.path.join(FIXTURES, "stateless-http", "src"), RULES)
+                self.assertEqual(assess.rollup(findings), "blocked")
+                self.assertIn("container.architecture", {f["rule"] for f in findings})
+
+    def test_x86_linux_platform_is_not_a_finding(self):
+        inv = load("fixtures", "stateless-http", "inventory.json")
+        inv["taskDefinition"]["runtimePlatform"] = {"cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX"}
+        findings = assess.assess(inv, os.path.join(FIXTURES, "stateless-http", "src"), RULES)
+        self.assertEqual(assess.rollup(findings), "supported")
 
     def test_rules_and_checks_match(self):
-        src = open(os.path.join(ROOT, "scripts", "assess.py")).read()
+        with open(os.path.join(ROOT, "scripts", "assess.py")) as fh:
+            src = fh.read()
         used = set(re.findall(r'R\["([a-z.-]+)"\]', src))
         declared = {r["id"] for r in RULES["rules"]}
         self.assertEqual(used, declared)
 
     def test_missing_source_is_needs_investigation(self):
-        inv = json.load(open(os.path.join(FIXTURES, "stateless-http", "inventory.json")))
+        inv = load("fixtures", "stateless-http", "inventory.json")
         findings = assess.assess(inv, None, RULES)
         reasons = {f.get("reason") for f in findings}
         self.assertIn("source-unavailable", reasons)
@@ -702,8 +739,10 @@ class TestHelpers(unittest.TestCase):
     def test_scan_finds_python_and_js_clients(self):
         import tempfile
         with tempfile.TemporaryDirectory() as d:
-            open(os.path.join(d, "a.py"), "w").write('import boto3\ns3 = boto3.client("s3")\n')
-            open(os.path.join(d, "b.ts"), "w").write('import { SQSClient } from "@aws-sdk/client-sqs";\n')
+            with open(os.path.join(d, "a.py"), "w") as fh:
+                fh.write('import boto3\ns3 = boto3.client("s3")\n')
+            with open(os.path.join(d, "b.ts"), "w") as fh:
+                fh.write('import { SQSClient } from "@aws-sdk/client-sqs";\n')
             hits = assess.scan(d)
         self.assertEqual(sorted(hits), ["s3", "sqs"])
         self.assertEqual(hits["s3"], ["a.py:2"])
@@ -778,7 +817,7 @@ SKIP_DIRS = {".git", "node_modules", "vendor", "__pycache__", ".venv", "venv", "
 # Field paths the checks below evaluate. Anything else must be in rules.json "ignore",
 # otherwise it becomes a not-covered finding. Silently skipping a field is never allowed.
 COVERED = {
-    "cpu", "memory", "containerDefinitions", "volumes", "taskRoleArn",
+    "cpu", "memory", "containerDefinitions", "volumes", "taskRoleArn", "runtimePlatform",
     "containerDefinitions[].image", "containerDefinitions[].portMappings",
     "containerDefinitions[].entryPoint", "containerDefinitions[].command",
     "containerDefinitions[].environment", "containerDefinitions[].secrets",
@@ -899,6 +938,13 @@ def assess(inv, src_dir, rulesdoc):
         own = [pm["containerPort"] for pm in ing.get("portMappings", []) if pm.get("containerPort")]
         port = own[0] if own else ports[0]
         F.append(finding(R["container.port"], [f"containerDefinitions[{ing.get('name')}].portMappings[].containerPort={port}"], value=port))
+
+    # Platform: Cloud Run is Linux x86_64 only
+    rp = td.get("runtimePlatform") or {}
+    arch = str(rp.get("cpuArchitecture") or "X86_64").upper()
+    osf = str(rp.get("operatingSystemFamily") or "LINUX").upper()
+    if arch != "X86_64" or not osf.startswith("LINUX"):
+        F.append(finding(R["container.architecture"], [f"runtimePlatform={rp}"], subject=f"{osf}/{arch}"))
 
     # Containers
     F.append(finding(R["container.image"], [f"containerDefinitions[{ing.get('name')}].image={ing.get('image')}"], value=ing.get("image")))
@@ -1023,7 +1069,7 @@ if __name__ == "__main__":
 ```bash
 python3 -m unittest tests.test_assess -v 2>&1 | tail -15
 ```
-Expected: all tests `ok`, ending `OK`. If a fixture fails, compare the printed `simplify` output to `expected.json`; fix the fixture only if the script's behavior matches the spec, otherwise fix the script.
+Expected: all tests `ok`, ending `OK` (17 tests after Task 6 and 7 additions; 9 now). If a fixture fails, compare the printed `simplify` output to `expected.json`; fix the fixture only if the script's behavior matches the spec, otherwise fix the script.
 
 - [ ] **Step 3: Run the CLI on one fixture and read the summary**
 
@@ -1064,8 +1110,10 @@ class TestGenerate(unittest.TestCase):
         assessment = {"meta": inv["meta"], "rollup": roll, "findings": findings}
         yaml_text, sh_text = generate.generate(assessment, inv, "my-project", "us-central1")
         g = os.path.join(FIXTURES, "stateless-http", "golden")
-        self.assertEqual(yaml_text, open(os.path.join(g, "service.yaml")).read())
-        self.assertEqual(sh_text, open(os.path.join(g, "deploy.sh")).read())
+        with open(os.path.join(g, "service.yaml")) as fh:
+            self.assertEqual(yaml_text, fh.read())
+        with open(os.path.join(g, "deploy.sh")) as fh:
+            self.assertEqual(sh_text, fh.read())
 
     def test_refuses_blocked(self):
         inv, findings, roll = run_fixture("sqs-worker")
@@ -1092,7 +1140,7 @@ Expected: `ModuleNotFoundError: No module named 'generate'`.
 """Generate service.yaml and deploy.sh from assessment.json + inventory.json. Standard library only.
 
 Usage:
-  generate.py --assessment assessment.json --inventory inventory.json --project P --region R [--out-dir .]
+  generate.py --assessment assessment.json --inventory inventory.json --project P --region R [--out-dir out]
 
 Refuses (exit 2) on a blocked rollup. Emits manifest values only for findings whose verdict is
 supported; every other finding becomes an '# OMITTED:' line. No network calls.
@@ -1256,7 +1304,7 @@ def main():
     ap.add_argument("--inventory", required=True)
     ap.add_argument("--project", required=True)
     ap.add_argument("--region", required=True)
-    ap.add_argument("--out-dir", default=".")
+    ap.add_argument("--out-dir", default="out")
     a = ap.parse_args()
     assessment = json.load(open(a.assessment))
     inv = json.load(open(a.inventory))
@@ -1532,7 +1580,8 @@ def main():
     ap.add_argument("--rules", default=DEFAULT_RULES)
     ap.add_argument("--write", action="store_true")
     a = ap.parse_args()
-    doc = json.load(open(a.rules))
+    with open(a.rules) as fh:
+        doc = json.load(fh)
     stale = []
     for r in doc["rules"]:
         try:
@@ -1563,7 +1612,7 @@ if __name__ == "__main__":
 ```bash
 python3 scripts/docdrift.py
 ```
-Expected: `all 17 citations present`. If any id prints as STALE, open that URL, find the current sentence that supports the same claim, update `quote` in `rules.json`, and re-run. Do not weaken the claim to make the check pass; if the docs no longer support it, change the rule's `verdict` and `explain` to what the docs now say.
+Expected: `all 18 citations present`. If any id prints as STALE, open that URL, find the current sentence that supports the same claim, update `quote` in `rules.json`, and re-run. Do not weaken the claim to make the check pass; if the docs no longer support it, change the rule's `verdict` and `explain` to what the docs now say.
 
 - [ ] **Step 3: Write the workflow**
 
