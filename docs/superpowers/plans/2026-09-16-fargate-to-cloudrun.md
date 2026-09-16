@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-16-fargate-to-cloudrun-design.md`. Read it first. Two small deviations from the spec are made here and should be reflected back into the spec at the end (Task 11): the ECR-specific deploy steps (repo create, ECR login, Docker auth, copy) are all skipped when the image is not in ECR, not just two of them; and listener rules are not collected in v1 because no rule consumes them.
 
+**Source of truth after review rounds:** code review of each task may change files beyond what the plan's code blocks show. Once a task has passed both reviews, the file on disk is authoritative and the plan's block for it is historical. Later tasks build on disk, not on the plan's copy.
+
 **Repo:** `/Users/robertozuniga/Desktop/code/fargate-to-cloudrun` (already a git repo with the spec committed). All paths below are relative to it. Run all commands from the repo root.
 
 **Docs corpus (for the implementer, not shipped):** the 313 Cloud Run pages as markdown live at `/private/tmp/claude-501/-Users-robertozuniga-Desktop-code-blm-infra-platform/25ba96c8-074e-4f6d-b426-358bd88fa6ca/scratchpad/cloudrun/md/`. Every quote in `rules.json` below was copied from there on the 2026-09-12 snapshot. If you need to add a rule, take the quote from that folder, never from memory.
