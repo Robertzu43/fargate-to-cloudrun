@@ -77,7 +77,7 @@
       "ecs_field": "cpu, memory (task level)",
       "cloudrun_field": "spec.template.spec.containers[].resources.limits",
       "verdict": "supported",
-      "explain": "Cloud Run sets CPU and memory per instance; the Fargate task size maps to a documented Cloud Run pair, rounding CPU up to at least 1 vCPU so the sub-1-vCPU constraints never apply.",
+      "explain": "Cloud Run sets CPU and memory per instance; the Fargate task size maps to the smallest Cloud Run CPU tier, at least 1 vCPU, whose memory range holds the task memory.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/services/cpu",
       "quote": "A minimum of 0.5 vCPU is needed to set a memory limit greater than 512MiB.",
       "snapshot": "2026-09-12",

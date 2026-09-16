@@ -87,12 +87,12 @@ def secret_name(value_from):
 
 
 def size_units(value):
-    """'1024' -> 1024; '1 vCPU' / '2 GB' -> 1024 / 2048; missing or unparseable -> None."""
-    m = re.match(r"\s*(\d+(?:\.\d+)?)\s*(vcpu|gb)?", str(value), re.I)
+    """'1024' -> 1024; '1 vCPU' / '2 GB' -> 1024 / 2048; '512 MiB' -> 512; missing or unparseable -> None."""
+    m = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*(vcpu|gb|mb|mib)?\s*", str(value), re.I)
     if not m:
         return None
     n = float(m.group(1))
-    return int(n * 1024) if m.group(2) else int(n)
+    return int(n * 1024) if m.group(2) and m.group(2).lower() in ("vcpu", "gb") else int(n)
 
 
 def fargate_size(td):
@@ -254,16 +254,22 @@ def assess(inv, src_dir, rulesdoc):
                 ev.append(f"Cloud Run cpu={tier} chosen for {vcpu:g} vCPU / {mib} MiB")
             F.append(finding(R["resources.cpu-memory"], ev, value={"cpu": str(tier), "memory": f"{mib}Mi"}))
 
-    # Health
-    tgs = inv.get("targetGroups", [])
-    tg_http = [tg for tg in tgs
-               if str(tg.get("healthCheckProtocol", "")).upper() in ("HTTP", "HTTPS") and tg.get("healthCheckPath")]
-    if tg_http:
-        F.append(finding(R["health.http-probe"], [f"targetGroups[].healthCheckPath={tg_http[0]['healthCheckPath']}"], value=tg_http[0]["healthCheckPath"]))
-    elif tgs:
-        for tg in tgs:
-            proto = tg.get("healthCheckProtocol")
-            F.append(not_covered(f"targetGroups[].healthCheckProtocol={proto}", [f"targetGroups[{tg.get('targetGroupArn')}].healthCheckProtocol={proto} healthCheckPath={tg.get('healthCheckPath')}"]))
+    # Health: a target group is HTTP only if it carries HTTP traffic AND has an HTTP health-check path.
+    # An NLB passthrough group (protocol TCP) with an HTTP health check is still non-HTTP traffic.
+    probed = False
+    for tg in inv.get("targetGroups", []):
+        proto = str(tg.get("protocol") or "HTTP").upper()
+        hc = str(tg.get("healthCheckProtocol") or "").upper()
+        path = tg.get("healthCheckPath")
+        ev = f"targetGroups[{tg.get('targetGroupArn')}].protocol={proto} healthCheckProtocol={hc} healthCheckPath={path}"
+        if proto in ("HTTP", "HTTPS") and hc in ("HTTP", "HTTPS") and path:
+            if not probed:
+                F.append(finding(R["health.http-probe"], [f"targetGroups[].healthCheckPath={path}"], value=path))
+                probed = True
+        elif proto not in ("HTTP", "HTTPS"):
+            F.append(not_covered(f"targetGroups[].protocol={proto}", [ev]))
+        else:
+            F.append(not_covered(f"targetGroups[].healthCheckProtocol={hc}", [ev]))
     for c in cds:
         if c.get("healthCheck"):
             F.append(finding(R["health.command-probe"], [f"containerDefinitions[{c.get('name')}].healthCheck.command={c['healthCheck'].get('command')}"], subject=c.get("name", "")))
