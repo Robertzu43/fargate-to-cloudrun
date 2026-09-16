@@ -1,7 +1,7 @@
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
-  name: web
+  name: "web"  # ecs: service=web
 spec:
   template:
     metadata:
@@ -19,16 +19,17 @@ spec:
             cpu: "1"  # ecs: cpu=512 memory=1024 [resources.cpu-memory]
             memory: 1024Mi
         env:
-        - name: APP_ENV
+        - name: "APP_ENV"
           value: "staging"  # ecs: environment [config.env]
-        - name: API_KEY
+        - name: "API_KEY"
           value: "<redacted>"  # ecs: environment [config.env]
-        - name: DATABASE_URL
+        - name: "DATABASE_URL"
           valueFrom:
             secretKeyRef:
-              name: prod-db-url
+              name: "prod-db-url"
               key: "1"  # ecs: secrets [secrets.env] pinned to version 1
         startupProbe:
+          # Cloud Run probe timing defaults apply (periodSeconds 10, failureThreshold 3, timeoutSeconds 1); the v1 inventory carries no ECS health-check timing
           httpGet:
-            path: /  # ecs: targetGroups[].healthCheckPath [health.http-probe]
+            path: "/"  # ecs: targetGroups[].healthCheckPath [health.http-probe]
             port: 8080
