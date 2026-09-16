@@ -2,7 +2,7 @@
   <img src="assets/logo-wordmark.png" alt="fargate-to-cloudrun" width="440">
 </p>
 
-**From Fargate to Cloud Run — without learning a second cloud from scratch.**
+<p align="center"><strong>From Fargate to Cloud Run — without learning a second cloud from scratch.</strong></p>
 
 <p align="center">
   <a href="https://github.com/Robertzu43/fargate-to-cloudrun/actions/workflows/tests.yml"><img src="https://img.shields.io/github/actions/workflow/status/Robertzu43/fargate-to-cloudrun/tests.yml?label=CI" alt="CI"></a>
@@ -81,16 +81,26 @@ what it found, what needs to change, and anything that prevents the move.
 ## How it works
 
 ```mermaid
-%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#ffffff", "primaryTextColor": "#111111", "primaryBorderColor": "#111111", "lineColor": "#111111", "edgeLabelBackground": "#ffffff", "fontFamily": "Arial, sans-serif"}}}%%
+%%{init: {"theme": "base", "flowchart": {"curve": "basis", "nodeSpacing": 45, "rankSpacing": 60, "htmlLabels": true}, "themeVariables": {"primaryColor": "#ffffff", "primaryTextColor": "#111111", "primaryBorderColor": "#111111", "lineColor": "#111111", "edgeLabelBackground": "#ffffff", "fontFamily": "Arial, sans-serif", "fontSize": "14px"}}}%%
 flowchart LR
-    A["Inspect AWS<br/>and app code"] --> B["Plan and make<br/>the changes"]
-    B --> C["Deploy and test<br/>on Cloud Run"]
-    C --> D["Review results<br/>and approve"]
-    D --> E["Switch production<br/>and monitor"]
-    C -->|Fix failures| B
-    classDef plain fill:#ffffff,stroke:#111111,color:#111111,stroke-width:1px
-    class A,B,C,D,E plain
-    linkStyle default stroke:#111111,stroke-width:1px,color:#111111
+    A["<b>1 · Inspect</b><br/>AWS account and app code<br/><i>read-only</i>"]
+    B["<b>2 · Plan and change</b><br/>recorded in migration.md"]
+    C["<b>3 · Deploy and test</b><br/>staging on Cloud Run"]
+    D{"<b>4 · Review</b><br/>results with you"}
+    E["<b>5 · Switch and monitor</b><br/>production traffic"]
+
+    A -- "inventory + assessment,<br/>every finding cited" --> B
+    B -- "you approve billable<br/>resources and secrets" --> C
+    C -- "staging URL +<br/>critical-flow tests" --> D
+    D -- "you approve<br/>the cutover" --> E
+    D -. "failures: fix and redeploy" .-> B
+
+    classDef step fill:#ffffff,stroke:#111111,color:#111111,stroke-width:1.5px
+    classDef gate fill:#ffffff,stroke:#111111,color:#111111,stroke-width:2.5px
+    class A,B,C,E step
+    class D gate
+    linkStyle 0,1,2,3 stroke:#111111,stroke-width:1.5px,color:#111111
+    linkStyle 4 stroke:#111111,stroke-width:1.5px,color:#111111,stroke-dasharray:6 4
 ```
 
 The agent keeps a `migration.md` record in your project with the plan, changes, test results
