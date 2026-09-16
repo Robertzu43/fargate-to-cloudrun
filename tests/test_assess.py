@@ -1,6 +1,9 @@
+import copy
 import json
 import os
 import re
+import shlex
+import subprocess
 import sys
 import unittest
 
@@ -229,6 +232,23 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(hits["s3"], ["a.py:2"])
 
 
+def gen(edit=lambda inv: None, rules=RULES, project="my-project", region="us-central1"):
+    """stateless-http with `edit(inv)` applied -> (yaml_text, sh_text)."""
+    inv = load("fixtures", "stateless-http", "inventory.json")
+    edit(inv)
+    findings = assess.assess(inv, HTTP_SRC, rules)
+    return generate.generate({"meta": inv["meta"], "rollup": assess.rollup(findings), "findings": findings}, inv, project, region)
+
+
+ECR_IMAGE = "123456789012.dkr.ecr.us-east-1.amazonaws.com/web:1.0"
+
+
+def set_image(image):
+    def edit(inv):
+        inv["taskDefinition"]["containerDefinitions"][0]["image"] = image
+    return edit
+
+
 class TestGenerate(unittest.TestCase):
     def test_golden_stateless_http(self):
         inv, findings, roll = run_fixture("stateless-http")
@@ -247,9 +267,92 @@ class TestGenerate(unittest.TestCase):
 
     def test_omits_non_supported(self):
         inv, findings, roll = run_fixture("efs-mount")
-        yaml_text, _ = generate.generate({"meta": inv["meta"], "rollup": roll, "findings": findings}, inv, "p", "us-central1")
+        yaml_text, _ = generate.generate({"meta": inv["meta"], "rollup": roll, "findings": findings}, inv, "my-project", "us-central1")
         self.assertIn("# OMITTED: data — see finding storage.efs", yaml_text)
         self.assertNotIn("nfs:", yaml_text)
+
+    def test_refuses_when_image_unsupported(self):
+        rules = copy.deepcopy(RULES)
+        next(r for r in rules["rules"] if r["id"] == "container.image")["stale"] = True
+        with self.assertRaises(SystemExit) as cm:
+            gen(rules=rules)
+        self.assertIn("container.image", str(cm.exception))
+
+    def test_refuses_ecr_public(self):
+        with self.assertRaises(SystemExit) as cm:
+            gen(set_image("public.ecr.aws/nginx/nginx:latest"))
+        self.assertIn("ECR Public", str(cm.exception))
+
+    def test_names_normalized(self):
+        n = generate.names("My_Very_Long_Service_Name_With_Underscores_And_Even_More_Words", "my-project", "us-central1", "img")
+        self.assertRegex(n["slug"], r"^[a-z][a-z0-9-]*[a-z0-9]$")
+        self.assertLessEqual(len(n["slug"]), 49)
+        self.assertRegex(n["sa_id"], r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
+        self.assertEqual(n["sa_email"], f"{n['sa_id']}@my-project.iam.gserviceaccount.com")
+        with self.assertRaises(SystemExit):
+            generate.names("a", "my-project", "us-central1", "img")
+        with self.assertRaises(SystemExit):
+            gen(lambda inv: inv["meta"].__setitem__("service", "_"))
+
+    def test_slug_used_in_manifest_and_commands(self):
+        yaml_text, sh_text = gen(lambda inv: inv["meta"].__setitem__("service", "Web_API"))
+        self.assertIn('  name: "web-api"', yaml_text)
+        self.assertIn("gcloud run services describe web-api ", sh_text)
+        self.assertIn("gcloud run services logs read web-api ", sh_text)
+        self.assertIn("--display-name='Web_API on Cloud Run'", sh_text)
+
+    def test_yaml_scalars_quoted(self):
+        def edit(inv):
+            inv["taskDefinition"]["containerDefinitions"][0]["environment"].append({"name": "D: E", "value": "v"})
+            inv["targetGroups"][0]["healthCheckPath"] = "/health?x=1 # y"
+        yaml_text, _ = gen(edit)
+        self.assertIn('- name: "D: E"', yaml_text)
+        self.assertIn('path: "/health?x=1 # y"', yaml_text)
+
+    def test_health_path_shell_quoted(self):
+        path = '"; echo pwned; "'
+        _, sh_text = gen(lambda inv: inv["targetGroups"][0].__setitem__("healthCheckPath", path))
+        self.assertIn(shlex.quote(path), sh_text)
+        self.assertNotIn(path, sh_text.replace(shlex.quote(path), ""))
+        self.assertIn("--format='value(status.url)')\"" + shlex.quote(path) + " ", sh_text)
+
+    def test_ecr_path_steps(self):
+        yaml_text, sh_text = gen(set_image(ECR_IMAGE))
+        target = "us-central1-docker.pkg.dev/my-project/fargate-to-cloudrun/web:migrated"
+        expected = [
+            "gcloud artifacts repositories describe fargate-to-cloudrun --location=us-central1 --project=my-project >/dev/null 2>&1 || gcloud artifacts repositories create fargate-to-cloudrun",
+            "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 123456789012.dkr.ecr.us-east-1.amazonaws.com",
+            "gcloud auth configure-docker us-central1-docker.pkg.dev",
+            f"docker tag {ECR_IMAGE} {target}",
+        ]
+        pos = -1
+        for e in expected:
+            i = sh_text.find(e, pos + 1)
+            self.assertGreater(i, pos, e)
+            pos = i
+        self.assertIn(f"- image: {target}  # ecs:", yaml_text)
+
+    def test_deploy_sh_parses(self):
+        for edit in (lambda inv: None, set_image(ECR_IMAGE)):
+            _, sh_text = gen(edit)
+            r = subprocess.run(["bash", "-n"], input=sh_text, text=True, capture_output=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_no_shared_shell_state(self):
+        for edit in (lambda inv: None, set_image(ECR_IMAGE)):
+            _, sh_text = gen(edit)
+            self.assertNotIn("REGION=", sh_text)
+            self.assertNotIn("CLOUDSDK_CORE_PROJECT", sh_text)
+            self.assertNotIn("$URL", sh_text)
+            gcloud_lines = [l for l in sh_text.splitlines() if l.startswith("gcloud ")]
+            self.assertTrue(gcloud_lines)
+            for l in gcloud_lines:
+                self.assertIn("--project=my-project", l)
+
+    def test_rejects_bad_project_or_region(self):
+        for project, region in (("My Project", "us-central1"), ("my-project", "$REGION"), ("my-project", "us-central")):
+            with self.assertRaises(SystemExit):
+                gen(project=project, region=region)
 
 
 if __name__ == "__main__":
