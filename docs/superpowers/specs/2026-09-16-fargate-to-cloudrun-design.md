@@ -25,7 +25,7 @@ search or model memory.
 
 | Decision | Value |
 |---|---|
-| v1 compute path | ECS/Fargate -> Cloud Run only. The analyzer sees the whole AWS app; only ECS services are executed. |
+| v1 compute path | ECS/Fargate -> Cloud Run only. `scan.py` reports SDK usage of other AWS services (Lambda, SQS, DynamoDB, S3, ...) as out-of-scope findings; only the one ECS service is assessed and deployed. |
 | Operator mode | Guided, always. Every operator is treated as a developer with no Google Cloud knowledge. |
 | Execution depth | Assess + staging deploy. Production traffic, database moves, AWS teardown are detected and explained, never executed. |
 | AWS input | Live account via aws CLI (read-only) plus the app source tree. |
@@ -110,8 +110,8 @@ Two invariants hold throughout:
 ### Phase 2: Inventory
 - Run `inventory.py`. Collects: service, task definition (all containers), target groups and
   listener rules, Secrets Manager / SSM references (names only), task role and execution role
-  policy actions, EventBridge scheduled tasks referencing the task definition, CloudWatch alarms
-  on the service, VPC/subnet/security group ids, EFS volumes.
+  policy actions, EventBridge scheduled tasks referencing the task definition,
+  VPC/subnet/security group ids, EFS volumes.
 - Redaction: environment values are kept only when the key does not match a secret-like
   pattern (`(?i)(secret|token|password|passwd|api[_-]?key|private[_-]?key|credential)`);
   otherwise the value is replaced with `"<redacted>"`.
@@ -127,8 +127,10 @@ Two invariants hold throughout:
 ### Phase 4: Assess
 - Run `assess.py`. Present findings grouped: supported, needs-investigation, blocked.
 - Every finding shows: rule id, evidence (inventory path or file:line), docs URL, quoted sentence.
-- If anything is blocked: explain what would unblock it, ask whether to continue to a staging
-  deploy with that component excluded, or stop.
+- If the rollup is `blocked`: explain what would unblock it and stop. No generation, no deploy.
+- If the rollup is `needs-investigation`: list the items the user must verify, then ask whether to
+  continue to a staging deploy. Items with no Cloud Run mapping in v1 (EFS volumes, extra containers)
+  are omitted from the manifest with an explicit `# OMITTED:` marker and repeated in the closing report.
 
 ### Phase 5: Generate
 - Run `generate.py`. Show `service.yaml` and `deploy.sh` in full.
@@ -136,7 +138,11 @@ Two invariants hold throughout:
 - Confirm before proceeding.
 
 ### Phase 6: Staging deploy
-- Execute `deploy.sh` one command at a time. Before each command: what it does, what it costs, wait for yes.
+- `deploy.sh` is a plain shell script with one command per numbered comment block. The agent runs
+  each command itself, in order, rather than executing the file. Before each command: what it does,
+  what it costs, wait for yes. The file is also runnable end to end by a human who has read it.
+- Image copy is the first step that touches Google Cloud after API enablement. If the pull from ECR or
+  the push to Artifact Registry fails, the run stops there with the error verbatim.
 - Any failure: stop, show error verbatim, show docs link for that step. No silent retry.
 - Run `smoke.sh`. Report URL, pass/fail with output, last 20 log lines.
 - Closing report: URL, smoke result, remaining needs-investigation findings, the three things not
@@ -156,9 +162,11 @@ Per finding:
 
 - `supported`: the ECS configuration maps to a documented Cloud Run feature with no documented caveat.
 - `needs-investigation`: it maps, but the docs state a limitation the user must check against
-  their app, or the evidence was incomplete or unavailable.
-- `blocked`: the docs state Cloud Run services do not do this, or the inventory call was denied
+  their app, or the source tree was unavailable so SDK usage could not be scanned.
+- `blocked`: the docs state Cloud Run services do not do this, or an AWS inventory call was denied
   so the finding cannot be evaluated.
+
+Split rule: denied AWS call -> `blocked`. Missing source tree -> `needs-investigation`.
 
 Service rollup = worst finding. Missing evidence can never produce `supported`.
 
@@ -171,19 +179,27 @@ Each rule sourced from the Cloud Run docs corpus:
 4. Networking: ALB listener rules / target group paths / private subnets -> ingress, Direct VPC egress, connectors.
 5. Storage: EFS mounts -> NFS volumes; quote no-lock and mount-timeout caveats.
 6. Secrets and config: Secrets Manager / SSM references -> Secret Manager.
-7. Identity: task role policy actions grouped per AWS service; each becomes a needs-investigation
-   finding about code that still calls AWS.
+7. Identity: **task role** policy actions grouped per AWS service; each group becomes a
+   needs-investigation finding about code that still calls AWS. The **execution role** is out of
+   scope for this rule: its actions (ECR pull, CloudWatch Logs, `secretsmanager:GetSecretValue`,
+   `ssm:GetParameters`, `kms:Decrypt`) are ECS plumbing that Cloud Run replaces, not app dependencies.
 8. Workload type: HTTP service / scheduled task / queue consumer -> service / job / worker pool.
    Non-HTTP shapes are `blocked` for a service and point at the correct resource type.
 9. Timeouts and lifecycle: request timeout, stop timeout, scale-to-zero implications, CPU allocation.
 10. SDK usage from scan: every AWS service the code calls, cross-checked against identity findings.
 
 ### Doc drift
-`docdrift.py` re-fetches each cited page and confirms the quoted sentence still exists. If not,
+`docdrift.py` is a maintainer tool, run by the repo owner or CI before a release. It is never run
+during the guided workflow and the skill never invokes it. It re-fetches each cited page and confirms the quoted sentence still exists. If not,
 the rule is marked stale in a generated `references/stale.json`; `assess.py` downgrades any finding
 from a stale rule to needs-investigation with reason `citation stale, pending review`.
 
 ## 7. Generation, staging deploy, smoke test
+
+### generate.py contract
+`generate.py` targets the stateless HTTP shape only. It refuses to run on a `blocked` rollup. On
+`needs-investigation` it emits the manifest with unmapped items replaced by `# OMITTED: <item> — see
+finding <rule id>` comments. It performs no network calls and is fixture-replayable.
 
 ### Generated artifacts
 - `service.yaml`: Cloud Run service manifest (documented YAML format). Image, PORT, CPU, memory,
@@ -195,8 +211,8 @@ from a stale rule to needs-investigation with reason `citation stale, pending re
   (`gcloud run services replace service.yaml`); fetch URL.
 
 ### Image handling
-Copy with local Docker or crane, whichever is present. No rebuild. If the image is not pullable,
-the finding is `blocked` with the reason.
+Copy with local Docker or crane, whichever is present. No rebuild. Pullability is not assessed in
+advance; the copy step in Phase 6 fails and stops the run with the error if the image cannot be pulled.
 
 ### Secrets
 Secrets are created by name only. The user adds values through a documented gcloud command shown
@@ -220,7 +236,7 @@ fixtures/<name>/
 ### Fixtures
 | Fixture | Contents | Expected rollup |
 |---|---|---|
-| stateless-http | one container, PORT, HTTP health check, env vars, one Secrets Manager ref | supported (demo; only fixture that deploys) |
+| stateless-http | one container, PORT, HTTP health check, env vars, one Secrets Manager ref, task role with no policy actions, execution role with ECR/logs/GetSecretValue | supported (demo; only fixture that deploys) |
 | sidecar-datadog | two containers | needs-investigation (multi-container docs quoted) |
 | efs-mount | EFS volume | needs-investigation (NFS no-lock, mount timeout quoted) |
 | sqs-worker | no port, task role with sqs:ReceiveMessage, source calls SQS | blocked for service -> worker pools; needs-investigation for SQS SDK |
