@@ -1,3 +1,7 @@
+> Historical design record. The current migration workflow and scope are defined in
+> [SKILL.md](../../../SKILL.md), [README.md](../../../README.md), and
+> [migration-workflow.md](../../../references/migration-workflow.md).
+
 # fargate-to-cloudrun Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

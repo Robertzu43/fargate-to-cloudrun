@@ -5,6 +5,7 @@
     {"rule": "container.image", "verdict": "supported", "subject": ""},
     {"rule": "container.port", "verdict": "supported", "subject": ""},
     {"rule": "health.http-probe", "verdict": "supported", "subject": ""},
+    {"rule": "not-covered", "verdict": "needs-investigation", "subject": "environment.API_KEY"},
     {"rule": "resources.cpu-memory", "verdict": "supported", "subject": ""},
     {"rule": "scaling.min-instances", "verdict": "supported", "subject": ""},
     {"rule": "storage.efs", "verdict": "needs-investigation", "subject": "data"},
