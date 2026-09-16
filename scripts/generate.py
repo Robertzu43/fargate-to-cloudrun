@@ -4,14 +4,15 @@
 Usage:
   generate.py --assessment assessment.json --inventory inventory.json --project P --region R [--out-dir out]
 
-Refuses (exit 2) on a blocked rollup. Emits manifest values only for findings whose verdict is
-supported; every other finding becomes an '# OMITTED:' line. No network calls.
+Refuses (exit 2) when findings are unresolved or secret versions are unspecified.
+Produces configuration for validation, not certification of production readiness. No network calls.
 """
 import argparse
 import json
 import os
 import re
 import shlex
+from assess import inventory_hash
 
 REPO = "fargate-to-cloudrun"
 DOCS = {
@@ -47,15 +48,18 @@ def names(service, project, region, src_image):
     }
 
 
-def generate(assessment, inv, project, region, out_dir="out"):
-    if assessment["rollup"] == "blocked":
-        raise SystemExit("refusing to generate: rollup is blocked")
+def generate(assessment, inv, project, region, out_dir="out", secret_versions=None):
+    if assessment.get("inventory_sha256") and assessment["inventory_sha256"] != inventory_hash(inv):
+        raise SystemExit("assessment belongs to a different inventory; re-run assessment")
+    unresolved = [f for f in assessment["findings"] if f["verdict"] != "supported"]
+    if assessment["rollup"] != "supported" or unresolved or not assessment["findings"]:
+        raise SystemExit("refusing executable generation: resolve findings first: " +
+                         ", ".join(f["rule"] + (":" + f.get("subject", "") if f.get("subject") else "") for f in unresolved))
     if not re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", project):
         raise SystemExit(f"invalid Google Cloud project id: {project!r}")
     if not re.fullmatch(r"[a-z]+-[a-z]+\d", region):
         raise SystemExit(f"invalid Cloud Run region: {region!r}")
     sup = {f["rule"]: f for f in assessment["findings"] if f["verdict"] == "supported"}
-    omitted = [f for f in assessment["findings"] if f["verdict"] != "supported"]
     service = inv["meta"]["service"]
     src_image = sup.get("container.image", {}).get("value")
     if not src_image:
@@ -65,6 +69,13 @@ def generate(assessment, inv, project, region, out_dir="out"):
     port = sup["container.port"]["value"] if "container.port" in sup else 8080
     env = sup.get("config.env", {}).get("value", [])
     secrets = sup.get("secrets.env", {}).get("value", [])
+    if any("<redacted>" in str(e.get("value", "")) for e in env):
+        raise SystemExit("refusing to deploy redacted environment values")
+    secret_versions = secret_versions or {}
+    for s in secrets:
+        version = str(secret_versions.get(s["secret"], ""))
+        if not re.fullmatch(r"[1-9][0-9]*", version):
+            raise SystemExit("provide --secret-versions with a verified numeric version for " + s["secret"])
     health_path = sup["health.http-probe"]["value"] if "health.http-probe" in sup else "/"
     proj = f"--project={project}"
 
@@ -99,15 +110,13 @@ def generate(assessment, inv, project, region, out_dir="out"):
             y += [f"        - name: {q(e['name'])}", f"          value: {q(e.get('value', ''))}  # ecs: environment [config.env]"]
         for s in secrets:
             y += [f"        - name: {q(s['name'])}", "          valueFrom:", "            secretKeyRef:",
-                  f"              name: {q(s['secret'])}", '              key: "1"  # ecs: secrets [secrets.env] pinned to version 1']
+                  f"              name: {q(s['secret'])}", f"              key: {q(secret_versions[s['secret']])}  # pinned Secret Manager version"]
     if "health.http-probe" in sup:
         y += ["        startupProbe:",
               "          # Cloud Run probe timing defaults apply (periodSeconds 10, failureThreshold 3, timeoutSeconds 1); the v1 inventory carries no ECS health-check timing",
               "          httpGet:",
               f"            path: {q(health_path)}  # ecs: targetGroups[].healthCheckPath [health.http-probe]",
               f"            port: {port}"]
-    for f in omitted:
-        y.append(f"# OMITTED: {(f.get('subject') or f['rule']).replace(chr(10), ' ')} — see finding {f['rule']}")
     yaml_text = "\n".join(y) + "\n"
 
     steps = []
@@ -136,26 +145,21 @@ def generate(assessment, inv, project, region, out_dir="out"):
         step("Copy the image from ECR to Artifact Registry",
              "Cloud Run needs the image in Artifact Registry. The image is copied, not rebuilt.",
              DOCS["registry"],
-             f"docker pull {shlex.quote(src_image)}", f"docker tag {shlex.quote(src_image)} {image}", f"docker push {image}")
+             f"docker pull --platform linux/amd64 {shlex.quote(src_image)}", f"docker tag {shlex.quote(src_image)} {image}", f"docker push {image}")
     step("Create the runtime service account if it does not exist",
          "Every Cloud Run service runs as a Google service account, its identity when calling Google APIs. It carries no AWS credentials.",
          DOCS["identity"],
          f'gcloud iam service-accounts describe {sa} {proj} >/dev/null 2>&1 || gcloud iam service-accounts create {sa_id} --display-name={shlex.quote(service + " on Cloud Run")} {proj}')
     if secrets:
         secret_ids = " ".join(shlex.quote(s["secret"]) for s in secrets)
-        step("Create each Secret Manager secret (empty) if it does not exist",
-             "Secret Manager replaces AWS Secrets Manager and SSM. Values are added by you in a later step, never by this script.",
-             DOCS["secrets"],
-             f'for s in {secret_ids}; do gcloud secrets describe "$s" {proj} >/dev/null 2>&1 || gcloud secrets create "$s" --replication-policy=automatic {proj}; done')
         step("Grant the runtime service account access to each secret",
              "The docs: to allow Cloud Run to access the secret, the service identity must have the Secret Manager Secret Accessor role.",
              DOCS["secrets"],
              f'for s in {secret_ids}; do gcloud secrets add-iam-policy-binding "$s" --member=serviceAccount:{sa} --role=roles/secretmanager.secretAccessor {proj} >/dev/null; done')
-        step("PAUSE: add a value to every secret yourself, then continue",
-             "The manifest pins each secret to version 1. In another terminal run each command below, type the value, then press Ctrl-D. This script never sees the values.",
+        step("Verify every pinned secret version is enabled",
+             "Import the approved secrets before deployment, then regenerate with --secret-versions. This check reads metadata only.",
              DOCS["secrets"],
-             *[f'echo "  gcloud secrets versions add {shlex.quote(s["secret"])} --data-file=- {proj}"' for s in secrets],
-             'read -r -p "Press Enter once every secret above has a version... "')
+             *[f'test "$(gcloud secrets versions describe {secret_versions[s["secret"]]} --secret={shlex.quote(s["secret"])} {proj} --format=\'value(state)\')" = ENABLED' for s in secrets])
     step("Deploy the service from service.yaml",
          "gcloud run services replace applies the manifest; the first run creates the service, later runs create a new revision.",
          DOCS["deploy"],
@@ -164,8 +168,8 @@ def generate(assessment, inv, project, region, out_dir="out"):
          "Every Cloud Run service gets a stable HTTPS URL on run.app.",
          DOCS["deploy"],
          f"gcloud run services describe {slug} --region={region} {proj} --format='value(status.url)'")
-    step("Smoke test with your own identity token (the service stays private)",
-         "Callers need the Cloud Run Invoker role; as project owner you already have it. No public access is granted here.",
+    step("Smoke test with your own identity token",
+         "The caller needs Cloud Run Invoker. This checks HTTP reachability only; run application tests before cutover.",
          DOCS["invoke"],
          f'curl -sf --retry 5 --retry-delay 3 -H "Authorization: Bearer $(gcloud auth print-identity-token)" '
          f'"$(gcloud run services describe {slug} --region={region} {proj} --format=\'value(status.url)\')"{shlex.quote(health_path)} '
@@ -178,8 +182,7 @@ def generate(assessment, inv, project, region, out_dir="out"):
     sh = ["#!/usr/bin/env bash",
           "# Generated by fargate-to-cloudrun. Read every step before running it.",
           "# Every step is self-contained (its own --project and --region, no shared variables), so the agent",
-          "# can run them one at a time in separate shells. The file also runs top to bottom; the PAUSE step's",
-          "# `read` exists for that whole-file run.",
+          "# can run them one at a time. Use set -euo pipefail in each shell; review the project and existing service first.",
           "set -euo pipefail",
           ""]
     for i, (purpose, explain, url, cmds) in enumerate(steps, 1):
@@ -194,13 +197,18 @@ def main():
     ap.add_argument("--project", required=True)
     ap.add_argument("--region", required=True)
     ap.add_argument("--out-dir", default="out")
+    ap.add_argument("--secret-versions", help="JSON mapping destination secret ids to verified numeric versions")
     a = ap.parse_args()
     with open(a.assessment) as fh:
         assessment = json.load(fh)
     with open(a.inventory) as fh:
         inv = json.load(fh)
     try:
-        yaml_text, sh_text = generate(assessment, inv, a.project, a.region, a.out_dir)
+        versions = None
+        if a.secret_versions:
+            with open(a.secret_versions) as fh:
+                versions = json.load(fh)
+        yaml_text, sh_text = generate(assessment, inv, a.project, a.region, a.out_dir, versions)
     except SystemExit as e:
         print(e)
         raise SystemExit(2)

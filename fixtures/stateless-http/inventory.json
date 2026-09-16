@@ -22,7 +22,7 @@
         "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
         "environment": [
           {"name": "APP_ENV", "value": "staging"},
-          {"name": "API_KEY", "value": "<redacted>"}
+          {"name": "LOG_LEVEL", "value": "info"}
         ],
         "secrets": [{"name": "DATABASE_URL", "valueFrom": "arn:aws:secretsmanager:us-east-1:123456789012:secret:prod/db-url-AbCdEf"}],
         "logConfiguration": {"logDriver": "awslogs", "options": {"awslogs-group": "/ecs/web"}}

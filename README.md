@@ -1,234 +1,190 @@
-# fargate-to-cloudrun
+# Fargate → Cloud Run
 
-**An agent skill that checks whether one Amazon ECS/Fargate service can run on Google Cloud Run,
-proves every claim with a quoted sentence from the Cloud Run documentation, and then walks you
-through a private staging deploy one confirmed step at a time.**
+**Move your AWS app to Google Cloud Run without learning a second cloud from scratch.**
 
-It runs inside Claude Code, Gemini CLI, or Codex. You do not need to know Google Cloud. The skill
-explains each concept the first time it appears and asks before it creates anything.
+An agent skill that inspects your ECS/Fargate application, works out the changes it needs,
+implements them, deploys to Cloud Run, tests real behavior, and carries out a reviewed production
+cutover. You provide access and decide the important tradeoffs. The agent does the cloud work.
 
----
+![The migration workflow: discover, plan, implement, verify, cut over with approval, and operate](assets/migration-flow.svg)
 
-## What it does, in one picture
+[Get started](#get-started) · [How it works](#how-it-works) · [What it handles](#what-it-handles) · [Trust and limits](#trust-and-limits) · [Contribute](#contribute)
 
-```
- your AWS account (read-only)          your source code
-        │                                     │
-        ▼                                     ▼
- 1. inventory.py  ──► inventory.json  (secrets redacted, denied calls recorded)
-                                │
-                                ▼
- 2. assess.py     ──► assessment.json  every finding: supported | needs-investigation | blocked
-                                │       + the docs URL and quoted sentence that justifies it
-                                ▼
- 3. generate.py   ──► out/service.yaml + out/deploy.sh   (only when nothing is blocked)
-                                │
-                                ▼
- 4. you + the agent run deploy.sh one step at a time, saying yes to each
-                                │
-                                ▼
-        a private Cloud Run service in your staging project, smoke-tested
-```
+> **Status: early release.** The local helpers have automated regression tests. The full agent-led
+> workflow still needs independent, real-world migration validation. This is not a one-click guarantee
+> for every ECS workload. Staging is part of the workflow, not its final objective.
 
-### What it will never do
+## Get started
 
-- Write anything to AWS. Only `describe`, `list`, and `get` calls, and it never reads a secret value.
-- Create, change, or delete anything on Google Cloud without asking you first, step by step.
-- Make your service public. The smoke test uses your own identity token.
-- Answer a question about Cloud Run from memory or from a web search. If the referenced
-  documentation does not cover it, it says so.
-- Migrate a database, switch production traffic, or tear down AWS. Those are detected and explained,
-  never executed.
-
----
-
-## Requirements
-
-On the machine where your agent runs:
-
-| Tool | Why | Check |
-|---|---|---|
-| Python 3.9+ | the three scripts (standard library only, nothing to pip install) | `python3 --version` |
-| aws CLI, logged in | read your ECS service | `aws sts get-caller-identity` |
-| gcloud, logged in | deploy to Cloud Run | `gcloud auth list` |
-| A Google Cloud project with billing enabled | where the staging service lands | `gcloud billing projects describe <project>` |
-| Docker | only if your image lives in ECR (it gets copied to Artifact Registry) | `docker --version` |
-
-The AWS identity needs read access to ECS, ELBv2, IAM (roles and policies), and EventBridge rules.
-The Google account needs Owner on the staging project. Use a fresh project for staging.
-
----
-
-## Install
-
-**Option A: one command, any supported agent**
+Install it in your coding agent:
 
 ```bash
 npx skills add Robertzu43/fargate-to-cloudrun
 ```
 
-Add `-g` to install for all your projects instead of the current one, and `-a claude-code`,
-`-a gemini-cli`, or `-a codex` to target one agent. This copies the whole repo (skill, scripts,
-rules, fixtures) into your agent's skills folder.
+Open your application's repository and ask:
 
-**Option B: manual**
+> Migrate my Fargate application to Cloud Run. Inspect AWS and the code, make the necessary changes,
+> deploy and test it, then help me switch production. Ask me before moving live traffic.
+
+You do not need to know the Google Cloud product names or write deployment commands. If you do not
+know your ECS service names, the agent can discover them. If several unrelated apps exist, it will ask
+which one you mean.
+
+**Start with:** Python 3.9+, an authenticated AWS CLI, and the application's source code when available.
+The agent helps you set up Google Cloud access, a billing-enabled project, appropriate permissions and
+Docker when they are needed. **Google Cloud setup is not required for the initial assessment.**
+
+The skill uses ordinary CLI commands and `SKILL.md` instructions for agents such as Claude Code,
+Codex, and Gemini CLI. Full end-to-end behavior across those agents has not yet been independently verified.
+
+<details>
+<summary>Manual installation</summary>
+
+From your application repository, install into the location your agent reads:
 
 ```bash
-# Claude Code (project-level; use ~/.claude/skills/ for all projects)
-git clone https://github.com/Robertzu43/fargate-to-cloudrun .claude/skills/fargate-to-cloudrun
+# Claude Code
+ git clone https://github.com/Robertzu43/fargate-to-cloudrun .claude/skills/fargate-to-cloudrun
 
-# Gemini CLI and Codex (shared folder; use ~/.agents/skills/ for all projects)
-git clone https://github.com/Robertzu43/fargate-to-cloudrun .agents/skills/fargate-to-cloudrun
+# Codex / shared agent skills directory
+ git clone https://github.com/Robertzu43/fargate-to-cloudrun .agents/skills/fargate-to-cloudrun
 ```
 
-Then start your agent in the project that holds your service's source code.
+For other agents, use their supported skill installation flow. The scripts must remain next to `SKILL.md`.
 
----
+</details>
 
-## Use it, step by step
+## How it works
 
-Open your agent in the directory that contains the source code of the service you want to move,
-then say something like:
-
-> Assess my ECS service `web` in cluster `prod` for Cloud Run and take me through a staging deploy.
-
-The skill takes over from there. This is what happens, and what you will be asked.
-
-### Step 1: Preflight
-
-The agent checks aws, gcloud, your Google Cloud project and billing, and Docker if needed. If
-anything is missing it explains what the tool is, links the install page, and stops until it is
-ready. It then asks for three things:
-
-1. the ECS **cluster** name
-2. the ECS **service** name
-3. the path to the service's **source code** (say "none" if you do not have it; the assessment
-   then flags every AWS SDK dependency as needing your review)
-
-### Step 2: Inventory (read-only)
-
-```
-python3 $SKILL_DIR/scripts/inventory.py --cluster prod --service web --out inventory.json
-```
-
-The agent runs this and tells you what was collected, how many secret-looking values were
-redacted (environment variables, Docker labels, log-driver options, command-line flags), and
-every AWS call that was denied. A denied call is a finding, not something to paper over.
-
-### Step 3: Assessment
-
-```
-python3 $SKILL_DIR/scripts/assess.py --inventory inventory.json --src . --out assessment.json
-```
-
-You get a summary grouped into three verdicts. Every line shows the evidence from your task
-definition, the Cloud Run docs URL, and the exact sentence quoted from that page.
-
-| Verdict | Meaning | What happens next |
+| Step | The agent does | You decide |
 |---|---|---|
-| **supported** | maps to a documented Cloud Run feature with no caveat | continue |
-| **needs-investigation** | maps, but the docs state a limitation you must check, or evidence was incomplete | the agent lists what to verify, tells you what will be left out of the manifest, and asks whether to continue |
-| **blocked** | Cloud Run services do not do this, or an AWS call was denied | the agent explains what would unblock it and **stops** |
+| **Discover** | Reads the app, ECS configuration, images, networking, identities and dependencies. | Which application to move, if ambiguous. |
+| **Plan** | Determines what can move directly, what needs changes, and the cost/downtime implications. | Budget, acceptable downtime and consequential behavior changes. |
+| **Implement** | Updates code and infrastructure, configures Google resources, and transfers approved secrets. | Access and approval for the reviewed resource/secret-transfer scope. |
+| **Verify** | Deploys privately, tests critical application flows and fixes failures. | Whether observed results meet your business requirements. |
+| **Cut over** | Prepares and executes the actual production routing/data-writer switch, with monitoring and rollback. | Approval for the concrete production change. |
+| **Operate** | Updates deployment instructions or CI/CD and documents monitoring, costs and remaining dependencies. | When the rollback window is over and AWS resources may be retired. |
 
-Anything in your task definition the rules do not recognize is reported as needs-investigation,
-never skipped. The overall result is the worst verdict of any finding. Missing evidence can never
-produce "supported".
+The agent keeps a `migration.md` record in your project: what it found, what changed, what it tested,
+and what happens next. It explains decisions in plain language and does not require approval for
+repeated read-only checks. You can approve a batch of destination changes; production cutover and
+AWS deletion remain separate decisions.
 
-Common results and what they mean:
+## What it handles
 
-- **`workload.background` blocked**: no port exposed. On Cloud Run this is a worker pool, not a
-  service. v1 only deploys services.
-- **`workload.scheduled` blocked**: a scheduled task. On Cloud Run this is a job plus Cloud
-  Scheduler.
-- **`container.architecture` blocked**: ARM64 (Graviton) or Windows. Cloud Run runs Linux x86_64 only.
-- **`deps.aws-service` needs-investigation**: your code or task role talks to SQS, S3, DynamoDB
-  and so on. Cloud Run runs as a Google service account with no AWS credentials; each dependency
-  needs its own plan.
-- **`storage.efs` needs-investigation**: an EFS volume. Cloud Run can mount NFS, but there is no
-  Filestore yet, so the volume is left out of the staging manifest.
+There are two parts: **deterministic helpers for common mappings** and **an agent workflow for the
+application-specific work**. The distinction matters—an instruction to investigate is not a tested converter.
 
-### Step 4: Generate
+| Area | Current capability |
+|---|---|
+| ECS HTTP services | Inventory, field assessment, and YAML/CLI generation for the resolved single-service path. Repeat discovery per service for a multi-service app. |
+| Application changes | The agent edits source/build/configuration as needed, tests the changes, and builds the actual target image. |
+| Secrets Manager / SSM | Explicitly approved transfer helper, including JSON-key/version selectors; values stay out of terminal output and destination versions are recorded. |
+| Networking, sidecars, jobs, workers | The agent investigates current official docs and authors the appropriate configuration. These are not automatically converted by the HTTP generator. |
+| Databases, queues and storage | The agent chooses and implements an approved retain/move/replace strategy. Data migrations need engine-specific procedures, validation and rollback planning. |
+| Production cutover | Agent-executed, reviewed changes for the application's actual front door and data ownership. There is no generic cross-cloud traffic-switch command. |
+| AWS retirement | Separately approved after verification and the rollback window, with shared-resource and backup checks. |
 
-```
-python3 $SKILL_DIR/scripts/generate.py --assessment assessment.json --inventory inventory.json \
-  --project my-staging-project --region us-central1 --out-dir out
-```
+Some workloads need a different target or architectural changes. The agent should explain the exact
+mismatch and propose an approach—not silently remove the feature or pretend Cloud Run supports it.
 
-Two files appear, and the agent shows you both in full:
+## Trust and limits
 
-- `out/service.yaml`: the Cloud Run manifest. Every value carries a comment naming the ECS field
-  it came from and the rule that allowed it. Anything not supported appears as an `# OMITTED:` line.
-- `out/deploy.sh`: numbered steps. Each step has a plain-language explanation and a docs link,
-  names its own `--project` and `--region`, and is safe to re-run.
+**A supported field is not a migrated application.** The assessor's internal `rollup: supported` means
+its checked mappings passed. The user-facing result is **candidate for validation**. Source scanning is
+heuristic, and the inventory explicitly lists areas the agent must still investigate.
 
-The generator refuses, and the run stops, when the rollup is blocked, the project id or region is
-invalid, the image is on ECR Public, or the service name cannot become a valid Cloud Run name.
+**The generator does not silently omit unresolved requirements.** Redacted configuration, missing
+load-balancer evidence, unsupported features and other open findings stop executable generation. The
+agent resolves them or authors and verifies the required configuration directly. It must not edit the
+original evidence or suppress findings to force a pass.
 
-### Step 5: Staging deploy, one step at a time
+**Secret values stay out of the conversation.** Environment values are withheld by default. Explicit
+`--include-env NAME` options allow reviewed non-secret values. Other fields have best-effort redaction;
+inventories must still be treated as sensitive. The optional transfer helper reads only the approved
+AWS references and sends values to Google through process pipes. It writes version metadata, not values.
 
-The agent runs each step of `out/deploy.sh` itself and asks you before every one. The full path
-for an image in ECR is:
+**Documentation is evidence, not a proof system.** Mapping rules include official links and excerpts.
+A scheduled check detects missing excerpts; a maintainer must review and distribute updated rules.
+It does not detect every semantic platform change or automatically update installed copies. The agent
+can consult current official documentation and record decisions beyond the bundled rules.
 
-1. enable the Cloud Run, Artifact Registry and Secret Manager APIs
-2. create the Artifact Registry repository
-3. log Docker in to ECR (read-only: a pull token)
-4. let Docker push to Artifact Registry
-5. copy the image (pull, tag, push; never rebuilt)
-6. create the runtime service account
-7. create each Secret Manager secret, empty
-8. grant the service account access to each secret
-9. **PAUSE**: you add each secret value yourself with the printed `gcloud secrets versions add`
-   command. The agent never sees the values.
-10. deploy from `out/service.yaml`
-11. print the service URL
-12. smoke test with your identity token (the service stays private)
-13. show the last 20 log lines
+**Production completion needs functional evidence.** A health endpoint alone does not verify your
+credentials, database, queue, files, authentication or actual user flows. Cutover requires those checks,
+monitoring and a viable rollback plan. Traffic rollback alone cannot recover writes made only to a new database.
 
-Steps 2 to 5 are skipped when the image is already in a registry Cloud Run can pull from. Any
-failure stops the run and shows the error verbatim with the docs link for that step.
+**Cloud operations can cost money.** Minimum instances, databases, networks, registries, secrets and logs
+may all incur charges. The agent estimates and reviews the planned resources. Deleting the Cloud Run
+service alone does not clean up everything. Project Owner is not a prerequisite; permissions should match
+the operations being performed.
 
-### Step 6: Closing report
+## Try the helpers without cloud access
 
-You get the URL, the smoke result, every item still marked needs-investigation or omitted, the
-three things not done by design (production traffic, database, AWS teardown), and the exact
-command to delete the staging service so you stop paying for it. Making the service public is a
-separate, explained confirmation if you want it.
-
----
-
-## Try it without an AWS account
-
-Six synthetic services live under `fixtures/`. From the skill directory:
+The fixtures exercise the local assessment and generator. They do not demonstrate a completed live migration.
 
 ```bash
-python3 scripts/assess.py --inventory fixtures/sqs-worker/inventory.json --src fixtures/sqs-worker/src --out /tmp/a.json
+python3 scripts/assess.py \
+  --inventory fixtures/stateless-http/inventory.json \
+  --src fixtures/stateless-http/src \
+  --out assessment.json
+
+# Prints proposed source/destination references. No values are read; no provider calls are made.
+python3 scripts/transfer_secrets.py --assessment assessment.json --project my-project
+
+python3 -m unittest discover -s tests -v
 ```
 
-You will see a `blocked` rollup with the worker-pool finding and its citation. `stateless-http`
-is the one fixture that rolls up `supported`; its generated deploy script is frozen under
-`fixtures/stateless-http/golden/`.
+For an application that has secrets, executable generation requires the actual destination versions:
 
----
+```bash
+# Only after the user has approved the source references and destination project.
+# Secret Manager must be enabled and the operator must have the required permissions.
+python3 scripts/transfer_secrets.py --assessment assessment.json \
+  --project my-project --apply --versions-out secret-versions.json
 
-## How the credibility works
+python3 scripts/generate.py --inventory inventory.json --assessment assessment.json \
+  --project my-project --region us-central1 \
+  --secret-versions secret-versions.json --out-dir out
+```
 
-- `references/rules.json` holds 18 rules. Each has the ECS field, the Cloud Run field, the
-  verdict, a plain-language explanation, the docs URL, the exact quoted sentence, and the snapshot
-  date. The assessor copies the URL and quote into every finding it derives from a rule.
-- A weekly GitHub Actions job (`scripts/docdrift.py`) re-fetches every cited page and fails if a
-  quoted sentence is gone. A rule marked stale downgrades its findings until a maintainer reviews it.
-- The test suite (44 tests, `python3 -m unittest tests.test_assess -v`) asserts that every fixture
-  yields its expected verdicts, that no incompatible fixture ever rolls up `supported`, that every
-  Cloud Run finding carries a citation, and that the demo deploy script is byte-identical to the
-  golden file.
+Do not run the synthetic fixture's transfer with `--apply`: its AWS references are examples.
+The deployed artifacts are `out/service.yaml` and `out/deploy.sh`. The agent reviews and executes them
+within the approved scope, then runs application-level verification. For apps without secrets, omit
+`--secret-versions`.
 
-## Scope of v1
+See [the functional example](examples/configured-api/README.md) for a small application that distinguishes
+“the server is up” from “the required configuration and application behavior work.”
 
-In: one ECS/Fargate service at a time, HTTP workloads, staging deploy, private by default.
-Out, by design: Lambda, queues and event buses, databases, production cutover, AWS teardown,
-multi-service apps, Terraform output.
+## Repository map
+
+| File | Purpose |
+|---|---|
+| [`SKILL.md`](SKILL.md) | Agent instructions from discovery through production handoff. |
+| [`references/migration-workflow.md`](references/migration-workflow.md) | Dependency investigation, implementation, testing, cutover and rollback procedures. |
+| [`scripts/inventory.py`](scripts/inventory.py) | Read-only AWS configuration collection with environment values withheld by default. |
+| [`scripts/assess.py`](scripts/assess.py) | Evidence-linked findings and explicit coverage limitations. |
+| [`scripts/generate.py`](scripts/generate.py) | Executable configuration for resolved HTTP mappings; refuses unresolved findings. |
+| [`scripts/transfer_secrets.py`](scripts/transfer_secrets.py) | Plan or explicitly perform secret-value transfers without displaying values. |
+| [`references/rules.json`](references/rules.json) | Reviewed mappings, platform constraints and source references. |
+| [`tests/`](tests/) | Regression tests for assessment, generation, secret handling and functional verification. |
+
+## Contribute
+
+The most useful contribution is evidence from a real migration: a sanitized configuration, the expected
+behavior, what failed, and the smallest reproducible test. Never attach raw inventories or credentials.
+
+Before proposing a new mapping, include a current official reference and tests for both its supported
+case and a case that must not pass. A fixture matching generated text is not enough to prove semantics.
+Run `python3 -m unittest discover -s tests -v`. Maintainers can check documentation excerpts with
+`python3 scripts/docdrift.py`; review any changes before writing stale flags or updating citations.
+
+Current validation goal: independent engineers migrate real applications with less manual work than the
+same agent without this skill, while finding consequential blockers and avoiding false compatibility claims.
+Until that evidence exists, the repository remains an early release.
 
 ## License
 
-Apache 2.0. Quoted documentation is copyright Google, CC-BY 4.0; see `NOTICE`. "Fargate" and
-"Cloud Run" are used descriptively. Not affiliated with or endorsed by Amazon or Google.
+Apache 2.0. Referenced Google documentation is attributed under CC-BY 4.0 in [NOTICE](NOTICE).
+“Fargate” and “Cloud Run” describe the source and destination. This project is not affiliated with or
+endorsed by Amazon or Google.

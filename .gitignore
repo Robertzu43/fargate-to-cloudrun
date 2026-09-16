@@ -3,3 +3,7 @@ __pycache__/
 /out/
 /inventory.json
 /assessment.json
+
+/secret-versions.json
+/secret-versions.json.tmp
+/migration-work/

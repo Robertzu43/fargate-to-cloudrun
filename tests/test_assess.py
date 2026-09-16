@@ -267,7 +267,7 @@ def gen(edit=lambda inv: None, rules=RULES, project="my-project", region="us-cen
     inv = load("fixtures", "stateless-http", "inventory.json")
     edit(inv)
     findings = assess.assess(inv, HTTP_SRC, rules)
-    return generate.generate({"meta": inv["meta"], "rollup": assess.rollup(findings), "findings": findings}, inv, project, region)
+    return generate.generate({"meta": inv["meta"], "rollup": assess.rollup(findings), "findings": findings}, inv, project, region, secret_versions={s["secret"]: "1" for f in findings if f["rule"] == "secrets.env" for s in f["value"]})
 
 
 ECR_IMAGE = "123456789012.dkr.ecr.us-east-1.amazonaws.com/web:1.0"
@@ -283,7 +283,7 @@ class TestGenerate(unittest.TestCase):
     def test_golden_stateless_http(self):
         inv, findings, roll = run_fixture("stateless-http")
         assessment = {"meta": inv["meta"], "rollup": roll, "findings": findings}
-        yaml_text, sh_text = generate.generate(assessment, inv, "my-project", "us-central1")
+        yaml_text, sh_text = generate.generate(assessment, inv, "my-project", "us-central1", secret_versions={s["secret"]: "1" for f in findings if f["rule"] == "secrets.env" for s in f["value"]})
         g = os.path.join(FIXTURES, "stateless-http", "golden")
         with open(os.path.join(g, "service.yaml")) as fh:
             self.assertEqual(yaml_text, fh.read())
@@ -295,11 +295,10 @@ class TestGenerate(unittest.TestCase):
         with self.assertRaises(SystemExit):
             generate.generate({"meta": inv["meta"], "rollup": roll, "findings": findings}, inv, "p", "r")
 
-    def test_omits_non_supported(self):
+    def test_refuses_non_supported(self):
         inv, findings, roll = run_fixture("efs-mount")
-        yaml_text, _ = generate.generate({"meta": inv["meta"], "rollup": roll, "findings": findings}, inv, "my-project", "us-central1")
-        self.assertIn("# OMITTED: data — see finding storage.efs", yaml_text)
-        self.assertNotIn("nfs:", yaml_text)
+        with self.assertRaises(SystemExit):
+            generate.generate({"meta": inv["meta"], "rollup": roll, "findings": findings}, inv, "my-project", "us-central1")
 
     def test_refuses_when_image_unsupported(self):
         rules = copy.deepcopy(RULES)
@@ -390,7 +389,7 @@ class TestInventoryHelpers(unittest.TestCase):
     def test_redact_matches_secret_like_keys(self):
         env = [{"name": "APP_ENV", "value": "prod"}, {"name": "DB_PASSWORD", "value": "x"},
                {"name": "Api-Key", "value": "y"}, {"name": "PRIVATE_KEY_PATH", "value": "/k"}]
-        out = inventory.redact(env)
+        out = inventory.redact(env, include_env=["APP_ENV"])
         self.assertEqual([e["value"] for e in out], ["prod", "<redacted>", "<redacted>", "<redacted>"])
 
     def test_policy_actions_flattens_allow_statements(self):
