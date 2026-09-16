@@ -6,7 +6,7 @@ spec:
   template:
     metadata:
       annotations:
-        autoscaling.knative.dev/minScale: "2"  # ecs: service.desiredCount [scaling.min-instances] Cloud Run scales to zero when idle unless minimum instances are set; the ECS desired count becomes the minimum, and those instances are billed while idle.
+        autoscaling.knative.dev/minScale: "2"  # ecs: service.desiredCount [scaling.min-instances] The initial minimum uses the ECS desired count. This is a migration policy choice, not equivalent autoscaling; review idle cost, concurrency, maximum instances, and background CPU before deploying.
     spec:
       serviceAccountName: web-run@my-project.iam.gserviceaccount.com  # created in deploy.sh; the runtime identity
       timeoutSeconds: 300  # Cloud Run documented default [timeout.request] The timeout is set by default to 5 minutes (300 seconds) and can be extended up to 60 minutes (3600 seconds).
@@ -21,13 +21,13 @@ spec:
         env:
         - name: "APP_ENV"
           value: "staging"  # ecs: environment [config.env]
-        - name: "API_KEY"
-          value: "<redacted>"  # ecs: environment [config.env]
+        - name: "LOG_LEVEL"
+          value: "info"  # ecs: environment [config.env]
         - name: "DATABASE_URL"
           valueFrom:
             secretKeyRef:
-              name: "prod-db-url"
-              key: "1"  # ecs: secrets [secrets.env] pinned to version 1
+              name: "prod-db-url-c8c8579321312e44"
+              key: "1"  # pinned Secret Manager version
         startupProbe:
           # Cloud Run probe timing defaults apply (periodSeconds 10, failureThreshold 3, timeoutSeconds 1); the v1 inventory carries no ECS health-check timing
           httpGet:

@@ -1,3 +1,7 @@
+> Historical design record. The current migration workflow and scope are defined in
+> [SKILL.md](../../../SKILL.md), [README.md](../../../README.md), and
+> [migration-workflow.md](../../../references/migration-workflow.md).
+
 # fargate-to-cloudrun: design
 
 Date: 2026-09-16
