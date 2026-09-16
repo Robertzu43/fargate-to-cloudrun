@@ -29,8 +29,9 @@ is in ECR.
 ## Try it without AWS
 
 ```
-python3 scripts/assess.py --inventory fixtures/sqs-worker/inventory.json --src fixtures/sqs-worker/src
+python3 scripts/assess.py --inventory fixtures/sqs-worker/inventory.json --src fixtures/sqs-worker/src --out /tmp/assessment.json
 ```
+Prints the summary and writes the assessment to `/tmp/assessment.json`.
 
 ## Tests
 

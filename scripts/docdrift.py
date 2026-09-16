@@ -30,6 +30,7 @@ def page_text(url):
     if url not in _CACHE:
         req = urllib.request.Request(url, headers={"User-Agent": "fargate-to-cloudrun docdrift"})
         raw = urllib.request.urlopen(req, timeout=30).read().decode("utf-8", "ignore")
+        # ponytail: tags stripped to "" so quotes spanning inline <code>/<a> match; a quote crossing a block boundary will fail — shorten the quote instead of changing this.
         _CACHE[url] = norm(re.sub(r"<[^>]+>", "", raw))
     return _CACHE[url]
 
@@ -41,15 +42,19 @@ def main():
     a = ap.parse_args()
     with open(a.rules) as fh:
         doc = json.load(fh)
-    stale = []
+    stale, failed = [], []
     for r in doc["rules"]:
+        q, u = norm(r["quote"]), r["url"]
         try:
-            ok = norm(r["quote"]) in page_text(r["url"])
+            ok = q in page_text(u)
         except Exception as e:  # network or HTTP error counts as not verified
             print(f"{r['id']}: fetch failed: {e}")
+            failed.append(r["id"])
             ok = False
         if not ok:
             stale.append(r["id"])
+    if a.write and failed:
+        sys.exit(f"refusing --write: {len(failed)} fetch(es) failed: {' '.join(failed)}")
     if a.write:
         for r in doc["rules"]:
             r["stale"] = r["id"] in stale
