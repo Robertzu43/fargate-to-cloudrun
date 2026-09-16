@@ -2,13 +2,13 @@
   "ignore": [
     "taskDefinitionArn", "revision", "status", "registeredAt", "registeredBy", "deregisteredAt",
     "requiresAttributes", "compatibilities", "requiresCompatibilities", "family", "tags",
-    "placementConstraints", "networkMode", "executionRoleArn",
+    "placementConstraints", "networkMode", "executionRoleArn", "service.launchType",
     "containerDefinitions[].name", "containerDefinitions[].essential",
     "containerDefinitions[].cpu", "containerDefinitions[].memory", "containerDefinitions[].memoryReservation",
-    "containerDefinitions[].logConfiguration", "containerDefinitions[].dockerLabels",
+    "containerDefinitions[].dockerLabels",
     "containerDefinitions[].startTimeout", "containerDefinitions[].stopTimeout",
     "containerDefinitions[].mountPoints", "containerDefinitions[].volumesFrom",
-    "containerDefinitions[].dependsOn", "containerDefinitions[].systemControls"
+    "containerDefinitions[].dependsOn"
   ],
   "rules": [
     {
