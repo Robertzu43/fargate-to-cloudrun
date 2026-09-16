@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="720" viewBox="0 0 1000 720" font-family="Helvetica, Arial, sans-serif" fill="#111">
+<rect width="1000" height="720" fill="#fff"/>
+<text x="213.0" y="50" text-anchor="middle" font-size="18" font-weight="700">You</text>
+<text x="787.0" y="50" text-anchor="middle" font-size="18" font-weight="700">The agent</text>
+<line x1="48" y1="64" x2="378" y2="64" stroke="#111" stroke-width="1.5"/>
+<line x1="622" y1="64" x2="952" y2="64" stroke="#111" stroke-width="1.5"/>
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#111"/></marker></defs>
+<line x1="500" y1="142" x2="500" y2="188" stroke="#111" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="500" y="88" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing="0.8">INSPECT</text>
+<circle cx="500" cy="120" r="20" fill="#fff" stroke="#111" stroke-width="2"/>
+<text x="500" y="126" text-anchor="middle" font-size="17" font-weight="700">1</text>
+<rect x="48" y="91.0" width="330" height="58" rx="6" fill="#fff" stroke="#111" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="62" y="115.0" font-size="13.5">Point it at one ECS service</text>
+<text x="62" y="134.0" font-size="13.5">and the app's source code.</text>
+<rect x="622" y="81.5" width="330" height="77" rx="6" fill="#fff" stroke="#111" stroke-width="1.5"/>
+<text x="636" y="105.5" font-size="13.5">Reads the AWS account and the code,</text>
+<text x="636" y="124.5" font-size="13.5">read-only. Redacts secrets and</text>
+<text x="636" y="143.5" font-size="13.5">records every denied call.</text>
+<line x1="378" y1="120" x2="478" y2="120" stroke="#111" stroke-width="1"/>
+<line x1="522" y1="120" x2="622" y2="120" stroke="#111" stroke-width="1"/>
+<line x1="500" y1="258" x2="500" y2="304" stroke="#111" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="500" y="204" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing="0.8">PLAN AND CHANGE</text>
+<circle cx="500" cy="236" r="20" fill="#fff" stroke="#111" stroke-width="2"/>
+<text x="500" y="242" text-anchor="middle" font-size="17" font-weight="700">2</text>
+<rect x="48" y="207.0" width="330" height="58" rx="6" fill="#fff" stroke="#111" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="62" y="231.0" font-size="13.5">Read the verdicts: supported,</text>
+<text x="62" y="250.0" font-size="13.5">needs-investigation, blocked.</text>
+<rect x="622" y="197.5" width="330" height="77" rx="6" fill="#fff" stroke="#111" stroke-width="1.5"/>
+<text x="636" y="221.5" font-size="13.5">Checks each setting against the</text>
+<text x="636" y="240.5" font-size="13.5">Cloud Run docs; every verdict quotes</text>
+<text x="636" y="259.5" font-size="13.5">its sentence. Plan goes to migration.md.</text>
+<line x1="378" y1="236" x2="478" y2="236" stroke="#111" stroke-width="1"/>
+<line x1="522" y1="236" x2="622" y2="236" stroke="#111" stroke-width="1"/>
+<line x1="500" y1="374" x2="500" y2="420" stroke="#111" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="500" y="320" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing="0.8">DEPLOY AND TEST</text>
+<circle cx="500" cy="352" r="20" fill="#fff" stroke="#111" stroke-width="2"/>
+<text x="500" y="358" text-anchor="middle" font-size="17" font-weight="700">3</text>
+<rect x="48" y="323.0" width="330" height="58" rx="6" fill="#fff" stroke="#111" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="62" y="347.0" font-size="13.5">Approve billable resources.</text>
+<text x="62" y="366.0" font-size="13.5">Add secret values yourself.</text>
+<rect x="622" y="304.0" width="330" height="96" rx="6" fill="#fff" stroke="#111" stroke-width="1.5"/>
+<text x="636" y="328.0" font-size="13.5">Deploys a private staging service,</text>
+<text x="636" y="347.0" font-size="13.5">one self-contained step at a time.</text>
+<text x="636" y="366.0" font-size="13.5">Runs your critical flows,</text>
+<text x="636" y="385.0" font-size="13.5">not just a health check.</text>
+<line x1="378" y1="352" x2="478" y2="352" stroke="#111" stroke-width="1"/>
+<line x1="522" y1="352" x2="622" y2="352" stroke="#111" stroke-width="1"/>
+<line x1="500" y1="490" x2="500" y2="536" stroke="#111" stroke-width="1.5" marker-end="url(#a)"/>
+<text x="500" y="436" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing="0.8">REVIEW</text>
+<circle cx="500" cy="468" r="20" fill="#fff" stroke="#111" stroke-width="2"/>
+<text x="500" y="474" text-anchor="middle" font-size="17" font-weight="700">4</text>
+<rect x="48" y="439.0" width="330" height="58" rx="6" fill="#fff" stroke="#111" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="62" y="463.0" font-size="13.5">Look at the staging URL, the tests,</text>
+<text x="62" y="482.0" font-size="13.5">and what was left out.</text>
+<rect x="622" y="429.5" width="330" height="77" rx="6" fill="#fff" stroke="#111" stroke-width="1.5"/>
+<text x="636" y="453.5" font-size="13.5">Reports what passed, what needs</text>
+<text x="636" y="472.5" font-size="13.5">your eyes, and what it will never</text>
+<text x="636" y="491.5" font-size="13.5">do on its own.</text>
+<line x1="378" y1="468" x2="478" y2="468" stroke="#111" stroke-width="1"/>
+<line x1="522" y1="468" x2="622" y2="468" stroke="#111" stroke-width="1"/>
+<text x="500" y="552" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing="0.8">SWITCH AND MONITOR</text>
+<circle cx="500" cy="584" r="20" fill="#fff" stroke="#111" stroke-width="2"/>
+<text x="500" y="590" text-anchor="middle" font-size="17" font-weight="700">5</text>
+<rect x="48" y="555.0" width="330" height="58" rx="6" fill="#fff" stroke="#111" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="62" y="579.0" font-size="13.5">Approve the cutover.</text>
+<text x="62" y="598.0" font-size="13.5">AWS stays up as rollback.</text>
+<rect x="622" y="555.0" width="330" height="58" rx="6" fill="#fff" stroke="#111" stroke-width="1.5"/>
+<text x="636" y="579.0" font-size="13.5">Moves production traffic and</text>
+<text x="636" y="598.0" font-size="13.5">watches it, only with your approval.</text>
+<line x1="378" y1="584" x2="478" y2="584" stroke="#111" stroke-width="1"/>
+<line x1="522" y1="584" x2="622" y2="584" stroke="#111" stroke-width="1"/>
+<path d="M48,468 H22 V236 H46" fill="none" stroke="#111" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<text x="14" y="352" font-size="11.5" font-style="italic" transform="rotate(-90 14,352)" text-anchor="middle">tests fail: fix and redeploy</text>
+<text x="48" y="692" font-size="12.5" fill="#444">Dashed boxes are your decisions. Nothing billable is created and no traffic moves without one.</text>
+</svg>

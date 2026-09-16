@@ -80,28 +80,9 @@ what it found, what needs to change, and anything that prevents the move.
 
 ## How it works
 
-```mermaid
-%%{init: {"theme": "base", "flowchart": {"curve": "basis", "nodeSpacing": 45, "rankSpacing": 60, "htmlLabels": true}, "themeVariables": {"primaryColor": "#ffffff", "primaryTextColor": "#111111", "primaryBorderColor": "#111111", "lineColor": "#111111", "edgeLabelBackground": "#ffffff", "fontFamily": "Arial, sans-serif", "fontSize": "14px"}}}%%
-flowchart LR
-    A["<b>1 · Inspect</b><br/>AWS account and app code<br/><i>read-only</i>"]
-    B["<b>2 · Plan and change</b><br/>recorded in migration.md"]
-    C["<b>3 · Deploy and test</b><br/>staging on Cloud Run"]
-    D{"<b>4 · Review</b><br/>results with you"}
-    E["<b>5 · Switch and monitor</b><br/>production traffic"]
-
-    A -- "inventory + assessment,<br/>every finding cited" --> B
-    B -- "you approve billable<br/>resources and secrets" --> C
-    C -- "staging URL +<br/>critical-flow tests" --> D
-    D -- "you approve<br/>the cutover" --> E
-    D -. "failures: fix and redeploy" .-> B
-
-    classDef step fill:#ffffff,stroke:#111111,color:#111111,stroke-width:1.5px
-    classDef gate fill:#ffffff,stroke:#111111,color:#111111,stroke-width:2.5px
-    class A,B,C,E step
-    class D gate
-    linkStyle 0,1,2,3 stroke:#111111,stroke-width:1.5px,color:#111111
-    linkStyle 4 stroke:#111111,stroke-width:1.5px,color:#111111,stroke-dasharray:6 4
-```
+<p align="center">
+  <img src="assets/how-it-works.svg" alt="How it works: five stages, what you do and what the agent does at each" width="900">
+</p>
 
 The agent keeps a `migration.md` record in your project with the plan, changes, test results
 and rollback steps. Testing includes your app's critical flows—not just a responding health endpoint.
