@@ -256,9 +256,10 @@ def assess(inv, src_dir, rulesdoc):
 
     # Health: a target group is HTTP only if it carries HTTP traffic AND has an HTTP health-check path.
     # An NLB passthrough group (protocol TCP) with an HTTP health check is still non-HTTP traffic.
+    # A missing traffic protocol was not collected and is never assumed HTTP.
     probed = False
     for tg in inv.get("targetGroups", []):
-        proto = str(tg.get("protocol") or "HTTP").upper()
+        proto = str(tg["protocol"]).upper() if tg.get("protocol") else "<missing>"
         hc = str(tg.get("healthCheckProtocol") or "").upper()
         path = tg.get("healthCheckPath")
         ev = f"targetGroups[{tg.get('targetGroupArn')}].protocol={proto} healthCheckProtocol={hc} healthCheckPath={path}"

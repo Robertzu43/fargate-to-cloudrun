@@ -128,10 +128,18 @@ class TestVerdicts(unittest.TestCase):
 
     def test_tcp_target_group_is_not_covered(self):
         def edit(inv):
-            inv["targetGroups"] = [{"targetGroupArn": "arn:tg", "healthCheckProtocol": "TCP", "port": 8080}]
+            inv["targetGroups"] = [{"targetGroupArn": "arn:tg", "protocol": "HTTP", "healthCheckProtocol": "TCP", "port": 8080}]
         findings, roll = http_case(edit)
         self.assertEqual(roll, "needs-investigation")
         self.assertIn("targetGroups[].healthCheckProtocol=TCP", {f["subject"] for f in findings})
+
+    def test_missing_traffic_protocol_is_not_assumed_http(self):
+        def edit(inv):
+            inv["targetGroups"] = [{"targetGroupArn": "arn:tg", "healthCheckProtocol": "HTTP", "healthCheckPath": "/", "port": 8080}]
+        findings, roll = http_case(edit)
+        self.assertEqual(roll, "needs-investigation")
+        self.assertIn("targetGroups[].protocol=<missing>", {f["subject"] for f in findings})
+        self.assertNotIn("health.http-probe", {f["rule"] for f in findings})
 
     def test_tcp_traffic_target_group_is_not_covered(self):
         def edit(inv):
@@ -330,7 +338,7 @@ class TestGenerate(unittest.TestCase):
             i = sh_text.find(e, pos + 1)
             self.assertGreater(i, pos, e)
             pos = i
-        self.assertIn(f"- image: {target}  # ecs:", yaml_text)
+        self.assertIn(f'- image: "{target}"  # ecs:', yaml_text)
 
     def test_deploy_sh_parses(self):
         for edit in (lambda inv: None, set_image(ECR_IMAGE)):
