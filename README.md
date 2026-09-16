@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo-wordmark.png" alt="fargate-to-cloudrun" width="640">
+</p>
+
 # Fargate → Cloud Run
 
 **Move your AWS app to Google Cloud Run without learning a second cloud from scratch.**
