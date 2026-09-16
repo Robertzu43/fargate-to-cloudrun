@@ -90,7 +90,7 @@ __pycache__/
 
 ```bash
 git add LICENSE NOTICE README.md .gitignore
-git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "chore: scaffold repo with Apache 2.0, NOTICE, README stub
+git commit -m "chore: scaffold repo with Apache 2.0, NOTICE, README stub
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -351,7 +351,7 @@ Expected: `18 27`
 
 ```bash
 git add references/rules.json
-git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "feat: rules.json with 18 cited Cloud Run rules and ECS ignore list
+git commit -m "feat: rules.json with 18 cited Cloud Run rules and ECS ignore list
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -616,7 +616,7 @@ Expected: no `BAD` lines; six directories listed.
 
 ```bash
 git add fixtures
-git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "test: six synthetic ECS fixtures with expected verdicts
+git commit -m "test: six synthetic ECS fixtures with expected verdicts
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -766,7 +766,7 @@ Expected: `ModuleNotFoundError: No module named 'assess'` and `FAILED (errors=1)
 
 ```bash
 git add tests
-git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "test: verdict, no-false-pass, citation, parity and helper tests for assess (red)
+git commit -m "test: verdict, no-false-pass, citation, parity and helper tests for assess (red)
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -1086,7 +1086,7 @@ Expected: `ROLLUP: blocked`, a `workload.background` entry with a docs URL and q
 ```bash
 chmod +x scripts/assess.py
 git add scripts/assess.py
-git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "feat: assess.py rules engine with source scan and unmatched-field findings (green)
+git commit -m "feat: assess.py rules engine with source scan and unmatched-field findings (green)
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -1353,7 +1353,7 @@ Expected: `OK`.
 ```bash
 chmod +x scripts/generate.py
 git add scripts/generate.py fixtures/stateless-http/golden tests/test_assess.py
-git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "feat: generate.py emits service.yaml + deploy.sh; golden files pin step order
+git commit -m "feat: generate.py emits service.yaml + deploy.sh; golden files pin step order
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -1529,7 +1529,7 @@ Expected: tests `OK`. The smoke prints at least 2 denied calls and `{}` for the 
 ```bash
 chmod +x scripts/inventory.py
 git add scripts/inventory.py tests/test_assess.py
-git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "feat: inventory.py read-only aws collection with redaction and denied recording
+git commit -m "feat: inventory.py read-only aws collection with redaction and denied recording
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -1639,7 +1639,7 @@ jobs:
 ```bash
 chmod +x scripts/docdrift.py
 git add scripts/docdrift.py .github/workflows/docdrift.yml
-git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "feat: docdrift.py citation check and weekly workflow
+git commit -m "feat: docdrift.py citation check and weekly workflow
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -1780,7 +1780,7 @@ Expected: frontmatter with `name:` and `description:`; line count under 300.
 
 ```bash
 git add SKILL.md
-git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "feat: SKILL.md guided workflow with invariants, grounding rule, and preflight text
+git commit -m "feat: SKILL.md guided workflow with invariants, grounding rule, and preflight text
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -1853,7 +1853,7 @@ Google or Amazon.
 
 ```bash
 git add README.md
-git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "docs: README
+git commit -m "docs: README
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -1883,7 +1883,7 @@ In section 7 "Generated artifacts", change the note that "steps 3 and 5 are skip
 
 ```bash
 git add docs/superpowers/specs/2026-09-16-fargate-to-cloudrun-design.md
-git -c user.email="rzuniga@aptsny.co" -c user.name="Roberto Zuniga" commit -m "docs: sync spec with implementation (ECR steps, listener rules)
+git commit -m "docs: sync spec with implementation (ECR steps, listener rules)
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git tag v0.1.0

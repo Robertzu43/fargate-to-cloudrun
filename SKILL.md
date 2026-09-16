@@ -98,10 +98,11 @@ flagged for review; tell the user they must re-supply that argument on Cloud Run
 ```
 python3 scripts/generate.py --assessment assessment.json --inventory inventory.json --project <project> --region <region> --out-dir out
 ```
-`generate.py` refuses to run — and the run stops — if the image is an ECR Public image or if the
-ECS service name cannot be turned into a valid Cloud Run name; show that refusal message
-verbatim. Otherwise show `out/service.yaml` and `out/deploy.sh` in full. Walk through each
-`deploy.sh` step's comment block. Ask whether to proceed.
+`generate.py` refuses to run — and the run stops — if the rollup is blocked, if the project id or
+region is invalid, if the image is an ECR Public image, if the ECS service name cannot be turned
+into a valid Cloud Run name, or when the image finding is not supported (for example its citation
+went stale); show that refusal message verbatim. Otherwise show `out/service.yaml` and
+`out/deploy.sh` in full. Walk through each `deploy.sh` step's comment block. Ask whether to proceed.
 
 ## Phase 5: Staging deploy
 
