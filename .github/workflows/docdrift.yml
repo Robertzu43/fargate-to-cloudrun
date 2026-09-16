@@ -2,6 +2,11 @@ name: docdrift
 permissions:
   contents: read
 on:
+  push:
+    paths:
+      - "references/rules.json"
+      - "scripts/docdrift.py"
+      - ".github/workflows/docdrift.yml"
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:
