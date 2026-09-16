@@ -1,0 +1,10 @@
+{
+  "meta": {"account": "123456789012", "identity": "arn:aws:iam::123456789012:user/readonly", "region": "us-east-1", "cluster": "demo", "service": "web", "collected": "2026-09-16T00:00:00+00:00"},
+  "service": {"desiredCount": 1, "launchType": "FARGATE", "networkConfiguration": {"awsvpcConfiguration": {"subnets": ["subnet-aaa"], "assignPublicIp": "ENABLED"}}, "loadBalancers": []},
+  "taskDefinition": {},
+  "targetGroups": [],
+  "taskRoleActions": [],
+  "executionRoleActions": [],
+  "scheduledRules": [],
+  "denied": [{"call": "ecs describe-task-definition", "error": "An error occurred (AccessDeniedException) when calling the DescribeTaskDefinition operation: User is not authorized"}]
+}

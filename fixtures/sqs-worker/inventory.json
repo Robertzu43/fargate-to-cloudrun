@@ -1,0 +1,31 @@
+{
+  "meta": {"account": "123456789012", "identity": "arn:aws:iam::123456789012:user/demo", "region": "us-east-1", "cluster": "demo", "service": "worker", "collected": "2026-09-16T00:00:00+00:00"},
+  "service": {
+    "desiredCount": 1,
+    "launchType": "FARGATE",
+    "networkConfiguration": {"awsvpcConfiguration": {"subnets": ["subnet-private-a"], "securityGroups": ["sg-222"], "assignPublicIp": "DISABLED"}},
+    "loadBalancers": []
+  },
+  "taskDefinition": {
+    "family": "worker",
+    "taskRoleArn": "arn:aws:iam::123456789012:role/worker-task",
+    "executionRoleArn": "arn:aws:iam::123456789012:role/worker-exec",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "1024",
+    "memory": "2048",
+    "containerDefinitions": [
+      {
+        "name": "worker",
+        "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/worker:1.4.0",
+        "essential": true,
+        "logConfiguration": {"logDriver": "awslogs", "options": {"awslogs-group": "/ecs/worker"}}
+      }
+    ]
+  },
+  "targetGroups": [],
+  "taskRoleActions": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"],
+  "executionRoleActions": ["ecr:GetAuthorizationToken", "logs:PutLogEvents"],
+  "scheduledRules": [],
+  "denied": []
+}

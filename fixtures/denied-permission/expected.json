@@ -1,0 +1,6 @@
+{
+  "rollup": "blocked",
+  "findings": [
+    {"rule": "denied", "verdict": "blocked", "subject": "ecs describe-task-definition"}
+  ]
+}

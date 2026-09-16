@@ -1,0 +1,38 @@
+{
+  "meta": {"account": "123456789012", "identity": "arn:aws:iam::123456789012:user/demo", "region": "us-east-1", "cluster": "demo", "service": "web-efs", "collected": "2026-09-16T00:00:00+00:00"},
+  "service": {
+    "desiredCount": 2,
+    "launchType": "FARGATE",
+    "networkConfiguration": {"awsvpcConfiguration": {"subnets": ["subnet-aaa", "subnet-bbb"], "securityGroups": ["sg-111"], "assignPublicIp": "ENABLED"}},
+    "loadBalancers": [{"targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/web/abc", "containerName": "web", "containerPort": 8080}]
+  },
+  "taskDefinition": {
+    "family": "web",
+    "taskRoleArn": "arn:aws:iam::123456789012:role/web-task",
+    "executionRoleArn": "arn:aws:iam::123456789012:role/web-exec",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "512",
+    "memory": "1024",
+    "volumes": [{"name": "data", "efsVolumeConfiguration": {"fileSystemId": "fs-0123456789abcdef0", "rootDirectory": "/"}}],
+    "containerDefinitions": [
+      {
+        "name": "web",
+        "image": "us-docker.pkg.dev/cloudrun/container/hello",
+        "essential": true,
+        "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+        "environment": [
+          {"name": "APP_ENV", "value": "staging"},
+          {"name": "API_KEY", "value": "<redacted>"}
+        ],
+        "mountPoints": [{"sourceVolume": "data", "containerPath": "/data"}],
+        "logConfiguration": {"logDriver": "awslogs", "options": {"awslogs-group": "/ecs/web"}}
+      }
+    ]
+  },
+  "targetGroups": [{"targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/web/abc", "healthCheckProtocol": "HTTP", "healthCheckPath": "/", "port": 8080}],
+  "taskRoleActions": [],
+  "executionRoleActions": ["ecr:GetAuthorizationToken", "ecr:BatchGetImage", "logs:CreateLogStream", "logs:PutLogEvents", "secretsmanager:GetSecretValue"],
+  "scheduledRules": [],
+  "denied": []
+}
