@@ -11,7 +11,7 @@ spec:
       serviceAccountName: web-run@my-project.iam.gserviceaccount.com  # created in deploy.sh; the runtime identity
       timeoutSeconds: 300  # Cloud Run documented default [timeout.request] The timeout is set by default to 5 minutes (300 seconds) and can be extended up to 60 minutes (3600 seconds).
       containers:
-      - image: us-docker.pkg.dev/cloudrun/container/hello  # ecs: containerDefinitions[].image=us-docker.pkg.dev/cloudrun/container/hello [container.image]
+      - image: "us-docker.pkg.dev/cloudrun/container/hello"  # ecs: containerDefinitions[].image=us-docker.pkg.dev/cloudrun/container/hello [container.image]
         ports:
         - containerPort: 8080  # ecs: portMappings[].containerPort [container.port]
         resources:

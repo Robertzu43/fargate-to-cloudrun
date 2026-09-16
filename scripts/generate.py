@@ -38,7 +38,7 @@ def names(service, project, region, src_image):
         raise SystemExit(f"cannot derive a Cloud Run service name from {service!r}")
     if src_image.split("/")[0] == "public.ecr.aws":
         raise SystemExit("refusing to generate: ECR Public images cannot be pulled by Cloud Run; copy the image to Artifact Registry first")
-    m = re.search(r"^([0-9]{12}\.dkr\.ecr(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com)/", src_image)
+    m = re.search(r"^([0-9]{12}\.dkr\.ecr(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?)/", src_image)
     is_ecr = bool(m)
     return {
         "slug": slug, "sa_id": sa_id, "sa_email": f"{sa_id}@{project}.iam.gserviceaccount.com",
@@ -78,7 +78,7 @@ def generate(assessment, inv, project, region):
     if "timeout.request" in sup:
         f = sup["timeout.request"]
         y.append(f"      timeoutSeconds: {f['value']}  # Cloud Run documented default [timeout.request] {f['quote']}")
-    y += ["      containers:", f"      - image: {image}  # ecs: containerDefinitions[].image={src_image} [container.image]"]
+    y += ["      containers:", f"      - image: {q(image)}  # ecs: containerDefinitions[].image={src_image} [container.image]"]
     if "container.port" in sup:
         y += ["        ports:", f"        - containerPort: {port}  # ecs: portMappings[].containerPort [container.port]"]
     if "container.command" in sup:
@@ -107,7 +107,7 @@ def generate(assessment, inv, project, region):
               f"            path: {q(health_path)}  # ecs: targetGroups[].healthCheckPath [health.http-probe]",
               f"            port: {port}"]
     for f in omitted:
-        y.append(f"# OMITTED: {f.get('subject') or f['rule']} — see finding {f['rule']}")
+        y.append(f"# OMITTED: {(f.get('subject') or f['rule']).replace(chr(10), ' ')} — see finding {f['rule']}")
     yaml_text = "\n".join(y) + "\n"
 
     steps = []

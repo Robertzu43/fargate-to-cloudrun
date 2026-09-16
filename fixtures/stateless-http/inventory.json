@@ -29,7 +29,7 @@
       }
     ]
   },
-  "targetGroups": [{"targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/web/abc", "healthCheckProtocol": "HTTP", "healthCheckPath": "/", "port": 8080}],
+  "targetGroups": [{"targetGroupArn": "arn:aws:elasticloadbalancing:us-east-1:123456789012:targetgroup/web/abc", "protocol": "HTTP", "healthCheckProtocol": "HTTP", "healthCheckPath": "/", "port": 8080}],
   "taskRoleActions": [],
   "executionRoleActions": ["ecr:GetAuthorizationToken", "ecr:BatchGetImage", "logs:CreateLogStream", "logs:PutLogEvents", "secretsmanager:GetSecretValue"],
   "scheduledRules": [],
