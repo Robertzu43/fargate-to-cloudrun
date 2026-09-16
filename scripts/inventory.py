@@ -5,8 +5,8 @@ Usage:
   inventory.py --cluster CLUSTER --service SERVICE [--region REGION] [--out inventory.json]
 
 Only describe/list/get calls are made; no call ever reads a Secrets Manager secret or an
-SSM parameter value. Values whose key or flag looks secret (environment, dockerLabels,
-logConfiguration.options, command/entryPoint flags) are replaced with "<redacted>".
+SSM parameter value. All environment values are withheld unless explicitly allowlisted as
+non-secret. Labels, log options, and argument flags receive best-effort name-based redaction.
 Every failed call is recorded under "denied" so nothing missing is ever assumed present.
 """
 import argparse
@@ -34,8 +34,9 @@ def aws(*args, region=None):
     return json.loads(p.stdout) if p.stdout.strip() else {}
 
 
-def redact(env):
-    return [{"name": e["name"], "value": REDACTED if SECRET_KEY.search(e["name"]) else e.get("value", "")}
+def redact(env, include_env=()):
+    # Names are not a reliable way to identify credentials (DATABASE_URL is a common example).
+    return [{"name": e["name"], "value": e.get("value", "") if e["name"] in include_env and not SECRET_KEY.search(e["name"]) else REDACTED}
             for e in env or []]
 
 
@@ -60,10 +61,10 @@ def redact_argv(argv):
     return out
 
 
-def scrub(c):
-    """Redact secret-looking values in one container definition, in place. ARNs/names stay."""
+def scrub(c, include_env=()):
+    """Withhold environment values and redact secret-looking keys/flags. ARNs/names stay."""
     if "environment" in c:
-        c["environment"] = redact(c["environment"])
+        c["environment"] = redact(c["environment"], include_env)
     if "dockerLabels" in c:
         c["dockerLabels"] = redact_map(c["dockerLabels"])
     if (c.get("logConfiguration") or {}).get("options"):
@@ -114,7 +115,8 @@ def role_actions(role_arn, region):
     return sorted(set(acts))
 
 
-def collect(cluster, service, region):
+def collect(cluster, service, region, include_env=()):
+    DENIED.clear()
     R = region
     ident = aws("sts", "get-caller-identity", region=R) or {}
     resp = aws("ecs", "describe-services", "--cluster", cluster, "--services", service, region=R) or {}
@@ -126,7 +128,7 @@ def collect(cluster, service, region):
     if svc.get("taskDefinition"):
         td = (aws("ecs", "describe-task-definition", "--task-definition", svc["taskDefinition"], region=R) or {}).get("taskDefinition", {})
     for c in td.get("containerDefinitions", []):
-        scrub(c)
+        scrub(c, include_env)
 
     tgs = []
     arns = [lb["targetGroupArn"] for lb in svc.get("loadBalancers", []) if lb.get("targetGroupArn")]
@@ -150,13 +152,18 @@ def collect(cluster, service, region):
         "meta": {"account": ident.get("Account", ""), "identity": ident.get("Arn", ""), "region": R or "",
                  "cluster": cluster, "service": service,
                  "collected": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")},
-        "service": {k: svc[k] for k in ("desiredCount", "launchType", "networkConfiguration", "loadBalancers") if k in svc},
+        # Keep configuration we do not yet map, so assessment can report it. Runtime events and
+        # deployments are redundant snapshots and may contain application-generated messages.
+        "service": {k: v for k, v in svc.items() if k not in {"events", "deployments", "taskSets", "tags"}},
         "taskDefinition": td,
         "targetGroups": tgs,
         "taskRoleActions": role_actions(td.get("taskRoleArn"), R),
         "executionRoleActions": role_actions(td.get("executionRoleArn"), R),
         "scheduledRules": sched,
-        "denied": DENIED,
+        "denied": list(DENIED),
+        "coverage": {"not_collected": ["ALB listeners and routing rules", "security-group and route rules",
+                     "Application Auto Scaling policies", "EventBridge Scheduler schedules",
+                     "runtime image digests", "database and external-service behavior"]},
     }
 
 
@@ -166,9 +173,11 @@ def main():
     ap.add_argument("--service", required=True)
     ap.add_argument("--region")
     ap.add_argument("--out", default="inventory.json")
+    ap.add_argument("--include-env", action="append", default=[], metavar="NAME",
+                    help="include this reviewed non-secret environment value; repeat for each name")
     a = ap.parse_args()
 
-    inv = collect(a.cluster, a.service, a.region)
+    inv = collect(a.cluster, a.service, a.region, a.include_env)
     with open(a.out, "w") as fh:
         json.dump(inv, fh, indent=2)
     cds = inv["taskDefinition"].get("containerDefinitions", [])

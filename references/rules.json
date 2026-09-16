@@ -25,7 +25,16 @@
     "containerDefinitions[].stopTimeout",
     "containerDefinitions[].mountPoints",
     "containerDefinitions[].volumesFrom",
-    "containerDefinitions[].dependsOn"
+    "containerDefinitions[].dependsOn",
+    "service.serviceArn",
+    "service.serviceName",
+    "service.clusterArn",
+    "service.taskDefinition",
+    "service.status",
+    "service.runningCount",
+    "service.pendingCount",
+    "service.createdAt",
+    "service.createdBy"
   ],
   "rules": [
     {
@@ -34,7 +43,7 @@
       "ecs_field": "containerDefinitions[].image",
       "cloudrun_field": "spec.template.spec.containers[].image",
       "verdict": "supported",
-      "explain": "Cloud Run pulls the container image from Artifact Registry, so an ECR image is copied there first; the image itself is not rebuilt.",
+      "explain": "For ECR, copy the Linux amd64 image to Artifact Registry. Verify the running source digest and destination digest before promoting; a tag or a container image alone does not prove runtime compatibility.",
       "url": "https://docs.cloud.google.com/run/docs/deploying",
       "quote": "Google recommends the use of Artifact Registry.",
       "snapshot": "2026-09-12",
@@ -94,11 +103,35 @@
       "ecs_field": "cpu, memory (task level)",
       "cloudrun_field": "spec.template.spec.containers[].resources.limits",
       "verdict": "supported",
-      "explain": "Cloud Run sets CPU and memory per instance; the Fargate task size maps to the smallest Cloud Run CPU tier, at least 1 vCPU, whose memory range holds the task memory.",
-      "url": "https://docs.cloud.google.com/run/docs/configuring/services/cpu",
-      "quote": "A minimum of 0.5 vCPU is needed to set a memory limit greater than 512MiB.",
-      "snapshot": "2026-09-12",
-      "stale": false
+      "explain": "The generator chooses an initial CPU/memory allocation from the documented table, using at least one CPU and 512 MiB. This is a starting point for load testing, not a performance or cost equivalence.",
+      "url": "https://docs.cloud.google.com/run/docs/configuring/services/memory-limits",
+      "quote": "When setting a CPU value, the following memory is required:",
+      "snapshot": "2026-09-16",
+      "stale": false,
+      "constraints": {
+        "memory_mib_by_cpu": {
+          "1": [
+            512,
+            4096
+          ],
+          "2": [
+            512,
+            8192
+          ],
+          "4": [
+            2048,
+            16384
+          ],
+          "6": [
+            4096,
+            24576
+          ],
+          "8": [
+            4096,
+            32768
+          ]
+        }
+      }
     },
     {
       "id": "resources.unsupported-pair",
@@ -106,10 +139,10 @@
       "ecs_field": "cpu, memory (task level)",
       "cloudrun_field": "spec.template.spec.containers[].resources.limits",
       "verdict": "blocked",
-      "explain": "This CPU and memory pair is outside the combinations the Cloud Run documentation lists.",
+      "explain": "The requested size is missing, invalid, or outside this generator’s documented CPU/memory combinations. Investigate an appropriate target; this is not proof that the application cannot migrate.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/services/memory-limits",
-      "quote": "Cloud Run instances that exceed their allowed memory limit are terminated.",
-      "snapshot": "2026-09-12",
+      "quote": "The maximum amount of memory you can configure is 32 gibibyte",
+      "snapshot": "2026-09-16",
       "stale": false
     },
     {
@@ -118,7 +151,7 @@
       "ecs_field": "targetGroups[].healthCheckPath (HTTP/HTTPS)",
       "cloudrun_field": "spec.template.spec.containers[].startupProbe.httpGet",
       "verdict": "supported",
-      "explain": "The load balancer's HTTP health check path becomes a Cloud Run startup probe on the same path.",
+      "explain": "Use the existing HTTP path as an initial startup probe. Verify protocol, timing, and application health separately; a successful probe is not a functional test.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/healthchecks",
       "quote": "Startup probes determine whether the container has started and is ready to accept traffic.",
       "snapshot": "2026-09-12",
@@ -142,10 +175,10 @@
       "ecs_field": "containerDefinitions[].environment",
       "cloudrun_field": "spec.template.spec.containers[].env[].value",
       "verdict": "supported",
-      "explain": "Plain environment variables carry over unchanged.",
+      "explain": "Reviewed plain values can be configured as environment variables. Withheld values must be restored securely or replaced with secret references before generation.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/services/environment-variables",
-      "quote": "You can set a maximum of 1000 environment variables for a Cloud Run service.",
-      "snapshot": "2026-09-12",
+      "quote": "Environment variables are bound to a specific service revision and are not visible to other services in your Google Cloud project.",
+      "snapshot": "2026-09-16",
       "stale": false
     },
     {
@@ -154,7 +187,7 @@
       "ecs_field": "containerDefinitions[].secrets[].valueFrom",
       "cloudrun_field": "spec.template.spec.containers[].env[].valueFrom.secretKeyRef",
       "verdict": "supported",
-      "explain": "AWS Secrets Manager and SSM references become Secret Manager references pinned to a version; the runtime service account needs the Secret Accessor role, and you add the values yourself.",
+      "explain": "Each complete AWS reference, including JSON and version selectors, gets its own destination id. Transfer the selected value, record the returned Google version, and pin that version; grant access only to the runtime identity.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/services/secrets",
       "quote": "Environment variables are resolved at instance startup time, so if you use this method, Google recommends that you pin the secret to a particular version instead of using latest as the version.",
       "snapshot": "2026-09-12",
@@ -166,7 +199,7 @@
       "ecs_field": "volumes[].efsVolumeConfiguration",
       "cloudrun_field": "spec.template.spec.volumes[].nfs",
       "verdict": "needs-investigation",
-      "explain": "Cloud Run can mount an NFS share such as Filestore, but without file locking and with a 30-second mount budget at startup; v1 omits the volume because no Filestore exists yet.",
+      "explain": "EFS needs an explicit target-storage and data-transfer plan. Cloud Run supports NFS without file locking. The agent must verify file semantics and provision the chosen target; the HTTP generator does not create storage.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/services/nfs-volume-mounts",
       "quote": "Cloud Run does not support NFS locking. NFS volumes are automatically mounted in no-lock mode.",
       "snapshot": "2026-09-12",
@@ -178,7 +211,7 @@
       "ecs_field": "service.networkConfiguration.awsvpcConfiguration (assignPublicIp DISABLED)",
       "cloudrun_field": "spec.template.metadata.annotations run.googleapis.com/network-interfaces",
       "verdict": "needs-investigation",
-      "explain": "The task reached private resources through VPC subnets; Cloud Run does the same with Direct VPC egress, but a Google Cloud VPC holding those resources must exist first, so v1 omits it.",
+      "explain": "The task has no public IP. Inspect its routes and dependencies before choosing Cloud Run connectivity; this flag alone does not prove which private resources it uses.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/vpc-direct-vpc",
       "quote": "You can enable your Cloud Run service, function, job, or worker pool to send traffic to a VPC network by using Direct VPC egress with no Serverless VPC Access connector required.",
       "snapshot": "2026-09-12",
@@ -190,7 +223,7 @@
       "ecs_field": "service.desiredCount",
       "cloudrun_field": "spec.template.metadata.annotations autoscaling.knative.dev/minScale",
       "verdict": "supported",
-      "explain": "Cloud Run scales to zero when idle unless minimum instances are set; the ECS desired count becomes the minimum, and those instances are billed while idle.",
+      "explain": "The initial minimum uses the ECS desired count. This is a migration policy choice, not equivalent autoscaling; review idle cost, concurrency, maximum instances, and background CPU before deploying.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/min-instances",
       "quote": "With minimum instances set, Cloud Run keeps at least the number of minimum instances running, even if they're not processing requests.",
       "snapshot": "2026-09-12",
@@ -202,7 +235,7 @@
       "ecs_field": "(none in v1 inventory)",
       "cloudrun_field": "spec.template.spec.timeoutSeconds",
       "verdict": "supported",
-      "explain": "Cloud Run closes a request that gets no response within the timeout; the documented default is used because ECS has no equivalent field.",
+      "explain": "The initial request timeout is 300 seconds. Verify actual request duration and change it when needed; this is a target default, not a discovered application requirement.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/request-timeout",
       "quote": "The timeout is set by default to 5 minutes (300 seconds) and can be extended up to 60 minutes (3600 seconds).",
       "snapshot": "2026-09-12",
@@ -214,7 +247,7 @@
       "ecs_field": "scheduledRules[] with no containerDefinitions[].portMappings",
       "cloudrun_field": "Cloud Run job + Cloud Scheduler",
       "verdict": "blocked",
-      "explain": "This task runs on a schedule and exits; on Cloud Run that is a job triggered by Cloud Scheduler, not a service, and v1 only deploys services.",
+      "explain": "A schedule and no exposed port suggest a finite job. Verify execution behavior and configure a Cloud Run job with an appropriate trigger; the HTTP generator cannot perform this mapping.",
       "url": "https://docs.cloud.google.com/run/docs/create-jobs",
       "quote": "Unlike a Cloud Run service, which listens for and serves requests, a Cloud Run job only runs its tasks and exits when finished.",
       "snapshot": "2026-09-12",
@@ -226,7 +259,7 @@
       "ecs_field": "no containerDefinitions[].portMappings and no scheduledRules[]",
       "cloudrun_field": "Cloud Run worker pool",
       "verdict": "blocked",
-      "explain": "This task exposes no port and runs continuously; on Cloud Run that is a worker pool, not a service, and v1 only deploys services.",
+      "explain": "No exposed port requires workload investigation. A continuous consumer may fit a worker pool, while finite work may fit a job. The HTTP generator is blocked; the agent must choose and implement the correct target.",
       "url": "https://docs.cloud.google.com/run/docs/overview/what-is-cloud-run",
       "quote": "Handles always-on background workloads such as workloads from message queues (Kafka, Pub/Sub, RabbitMQ).",
       "snapshot": "2026-09-12",

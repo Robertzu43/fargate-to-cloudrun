@@ -8,9 +8,10 @@ Every finding that makes a claim about Cloud Run comes from a row in rules.json 
 row's url and quote. Findings with reason denied, source-unavailable or not-covered are about AWS
 evidence and carry no citation. Reason `stale` marks a `supported` row whose citation failed doc
 drift: the finding downgrades to needs-investigation and keeps its url and quote.
-Missing evidence never produces `supported`.
+Supported findings describe checked fields only; inventory gaps and runtime validation remain explicit.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -19,11 +20,6 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_RULES = os.path.join(HERE, "..", "references", "rules.json")
 ORDER = {"supported": 0, "needs-investigation": 1, "blocked": 2}
-
-# Cloud Run memory bounds (MiB) per vCPU tier, from the documented table:
-# https://docs.cloud.google.com/run/docs/configuring/services/memory-limits
-# Fargate sizes below 1 vCPU are rounded up to 1 so the <1 vCPU constraints never apply.
-MEM_BOUNDS = {1: (128, 4096), 2: (128, 8192), 4: (2048, 16384), 8: (4096, 32768)}
 
 JS = r"\.(js|ts|mjs|cjs|jsx|tsx)$"
 JVM = r"\.(java|kt|scala)$"
@@ -43,7 +39,7 @@ SKIP_DIRS = {".git", "node_modules", "vendor", "__pycache__", ".venv", "venv", "
 # Field paths the checks below evaluate, at three depths only: top-level taskDefinition keys,
 # containerDefinitions[] keys, and top-level service keys. Nested keys under a covered path are
 # not walked. Anything else at those depths must be in rules.json "ignore", otherwise it becomes a
-# not-covered finding. Silently skipping a field is never allowed.
+# not-covered finding. Nested semantics still need the agent's migration review.
 COVERED = {
     "cpu", "memory", "containerDefinitions", "volumes", "taskRoleArn", "runtimePlatform",
     "containerDefinitions[].image", "containerDefinitions[].portMappings",
@@ -84,6 +80,14 @@ def secret_name(value_from):
     else:
         tail = value_from.split(":parameter/", 1)[-1]
     return re.sub(r"[^A-Za-z0-9_-]", "-", tail).strip("-")
+
+
+def secret_mapping(s):
+    source = s["valueFrom"]
+    # Full reference includes the account, region, JSON selector, and version selector.
+    suffix = hashlib.sha256(source.encode()).hexdigest()[:16]
+    return {"name": s["name"], "secret": (secret_name(source) or "secret")[:200] + "-" + suffix,
+            "source": source}
 
 
 def size_units(value):
@@ -176,7 +180,15 @@ def assess(inv, src_dir, rulesdoc):
             F.append(aws_finding("blocked", "denied", "taskDefinition", ["empty task definition"]))
         return F
 
+    for key in ("service", "targetGroups", "taskRoleActions", "scheduledRules", "denied"):
+        if key not in inv:
+            F.append(not_covered("inventory." + key, ["required evidence was not collected"]))
+
     ing = ingress_container(inv)
+    collected_tgs = {tg.get("targetGroupArn") for tg in inv.get("targetGroups", [])}
+    for lb in svc.get("loadBalancers", []):
+        if lb.get("targetGroupArn") and lb["targetGroupArn"] not in collected_tgs:
+            F.append(not_covered("targetGroups missing", [lb["targetGroupArn"]]))
 
     # Ports: only plain TCP mappings can become the Cloud Run port; anything else is not covered
     # but still counts as "exposes a port" so the task is not misread as a background worker.
@@ -194,6 +206,9 @@ def assess(inv, src_dir, rulesdoc):
             if not pm.get("containerPort"):
                 continue
             has_port = True
+            if type(pm["containerPort"]) is not int or not 1 <= pm["containerPort"] <= 65535:
+                F.append(not_covered("containerDefinitions[].portMappings[].containerPort", ["invalid port; expected an integer from 1 to 65535"]))
+                continue
             if proto != "tcp":
                 F.append(not_covered(f"containerDefinitions[].portMappings[].protocol={proto}", [f"{where}.protocol={proto} containerPort={pm['containerPort']}"]))
                 continue
@@ -215,6 +230,7 @@ def assess(inv, src_dir, rulesdoc):
         ev = [f"containerDefinitions[{ing.get('name')}].portMappings[].containerPort={port}"]
         if len(own) > 1:
             ev.append(f"multiple ports: {own}; Cloud Run exposes one")
+            F.append(not_covered("multiple container ports", [str(own)]))
         F.append(finding(R["container.port"], ev, value=port))
 
     # Platform: Cloud Run is Linux x86_64 only
@@ -248,7 +264,8 @@ def assess(inv, src_dir, rulesdoc):
     if vcpu is None or mib is None:
         F.append(finding(R["resources.unsupported-pair"], [ev[0] + " (missing or unparseable)"], subject=ev[0]))
     else:
-        tier = next((t for t in sorted(MEM_BOUNDS) if t >= cr_cpu and MEM_BOUNDS[t][0] <= mib <= MEM_BOUNDS[t][1]), None)
+        bounds = {int(k): v for k, v in R["resources.cpu-memory"]["constraints"]["memory_mib_by_cpu"].items()}
+        tier = next((t for t in sorted(bounds) if t >= cr_cpu and bounds[t][0] <= mib <= bounds[t][1]), None)
         if tier is None:
             F.append(finding(R["resources.unsupported-pair"], ev, subject=f"{vcpu:g} vCPU / {mib} MiB"))
         else:
@@ -278,10 +295,16 @@ def assess(inv, src_dir, rulesdoc):
             F.append(finding(R["health.command-probe"], [f"containerDefinitions[{c.get('name')}].healthCheck.command={c['healthCheck'].get('command')}"], subject=c.get("name", "")))
 
     # Env and secrets on the ingress container
-    if ing.get("environment"):
-        F.append(finding(R["config.env"], [f"containerDefinitions[{ing.get('name')}].environment ({len(ing['environment'])} vars)"], value=ing["environment"]))
+    safe_env = []
+    for e in ing.get("environment", []):
+        if "<redacted>" in str(e.get("value", "")):
+            F.append(not_covered(f"environment.{e['name']}", ["value withheld; restore a reviewed non-secret value or configure a Secret Manager reference"]))
+        else:
+            safe_env.append(e)
+    if safe_env:
+        F.append(finding(R["config.env"], [f"containerDefinitions[{ing.get('name')}].environment ({len(safe_env)} reviewed values)"], value=safe_env))
     if ing.get("secrets"):
-        names = [{"name": s["name"], "secret": secret_name(s["valueFrom"])} for s in ing["secrets"]]
+        names = [secret_mapping(s) for s in ing["secrets"]]
         F.append(finding(R["secrets.env"], [f"containerDefinitions[{ing.get('name')}].secrets[].valueFrom={s['valueFrom']}" for s in ing["secrets"]], value=names))
 
     # Storage
@@ -327,8 +350,13 @@ def rollup(findings):
     return max((f["verdict"] for f in findings), key=ORDER.__getitem__)
 
 
+def inventory_hash(inv):
+    return hashlib.sha256(json.dumps(inv, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
 def summary(findings, roll):
-    out = [f"ROLLUP: {roll}", ""]
+    label = "candidate-for-validation" if roll == "supported" else roll
+    out = [f"RESULT: {label}", "Field mappings are not proof of runtime compatibility or production readiness.", ""]
     for v in ("blocked", "needs-investigation", "supported"):
         group = [f for f in findings if f["verdict"] == v]
         if not group:
@@ -362,7 +390,12 @@ def main():
     findings = assess(inv, a.src, rulesdoc)
     roll = rollup(findings)
     with open(a.out, "w") as fh:
-        json.dump({"meta": inv.get("meta", {}), "rollup": roll, "findings": findings}, fh, indent=2)
+        json.dump({"meta": inv.get("meta", {}), "rollup": roll, "findings": findings,
+                   "inventory_sha256": inventory_hash(inv),
+                   "readiness": "candidate-for-validation" if roll == "supported" else roll,
+                   "coverage": inv.get("coverage", {}),
+                   "limitations": ["SDK scan is heuristic; no matches do not prove absence of dependencies.",
+                                   "Runtime behavior, concurrency, background work, networking, and data consistency require validation."]}, fh, indent=2)
     print(summary(findings, roll))
     print(f"wrote {a.out}")
 

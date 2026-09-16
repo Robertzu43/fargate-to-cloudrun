@@ -1,145 +1,155 @@
 ---
 name: fargate-to-cloudrun
-description: Assess one Amazon ECS/Fargate service for Google Cloud Run compatibility with evidence quoted from the Cloud Run documentation, then guide a private staging deploy. Use when the user wants to move, migrate, port, or compare an ECS or Fargate service to Cloud Run or Google Cloud.
+description: Inspect an application's ECS/Fargate deployment and source, adapt it for Google Cloud Run, deploy and test it, and carry out a reviewed production cutover. Use when someone wants to move an existing AWS container application to Cloud Run without learning the Google Cloud platform first.
 ---
 
-# fargate-to-cloudrun
+# Fargate → Cloud Run
 
-You are guiding someone who knows their AWS app but may know nothing about Google Cloud.
-Assume that for every operator. Explain each Google Cloud concept the first time it appears,
-in one or two plain sentences, and link the documentation. One ECS service per run.
+Own the migration, not just the assessment. Discover the application, choose a suitable target,
+make the necessary code and infrastructure changes, deploy, test real behavior, and complete the
+approved production switch. Staging is a checkpoint. A report or a responding URL is not completion.
 
-## Where the scripts are
+Explain decisions in terms of downtime, cost, behavior, and rollback. Do not ask the user to choose
+Google product names or debug provider configuration you can investigate yourself. Recommend a
+specific approach, explain material tradeoffs, and ask only for missing access or consequential decisions.
 
-This skill ships its own scripts. They live next to this file, not in the user's project.
-In every command below, `$SKILL_DIR` means the directory that contains this SKILL.md
-(your agent tells you that path when it loads the skill). Run the commands from the user's
-project directory so `inventory.json`, `assessment.json` and `out/` land there, and reference
-the scripts by their full path, for example `python3 $SKILL_DIR/scripts/assess.py ...`.
-Requirements on the machine: Python 3.9 or newer, the aws CLI, gcloud, and Docker only when
-the image lives in ECR. Nothing to pip install.
+The scripts beside this file are deterministic helpers for the simple HTTP path. They are not the
+boundary of your capabilities. A blocked generator means its automatic mapping cannot safely proceed;
+it does not mean stop helping or tell the user to learn Google Cloud.
 
-## Two invariants. Never break them.
+## Working files and authorization
 
-1. **Nothing writes to AWS.** Only `describe`, `list`, and `get` calls. Never `secretsmanager
-   get-secret-value`, never `ssm get-parameter`. `aws ecr get-login-password` is allowed: it only
-   obtains a pull token.
-2. **Nothing that creates, changes, or deletes anything on Google Cloud runs without the user
-   saying yes to that specific command, immediately before it runs.** Read-only checks
-   (`gcloud auth list`, `gcloud config get project`, `gcloud billing projects describe`) need no
-   confirmation.
+`$SKILL_DIR` is the directory containing this file. Use a migration working directory in the user's
+project, with a separate subdirectory for each service. Keep raw inventories, assessments, credentials,
+and deployment state out of version control. Read-only discovery and local preparation need no additional
+confirmation within the requested scope.
 
-## Grounding rule
+Keep `migration.md` current: source account/region/services, destination project/region, dependency map,
+chosen approach, unresolved findings, artifact/image identities, test results, and the next action.
+Read [migration-workflow.md](references/migration-workflow.md) when planning or executing the migration.
 
-Every statement you make about how Cloud Run behaves comes from `references/rules.json`: the
-`explain` sentence, the `url`, and the `quote`. If the user asks something no row covers, say
-"that is not covered by the referenced documentation" and stop there. Do not search the web. Do
-not answer from memory. This is what makes the tool trustworthy.
+The user may authorize a reviewed batch of destination changes; do not ask before every harmless CLI
+command. Confirm scope and estimated cost before creating billable infrastructure. Obtain explicit
+approval for transferring secret values, production traffic/data-writer cutover, and eventual AWS deletion.
+Preserve existing authorization. Never infer cutover or teardown approval from staging approval.
 
-Explanations of Google Cloud concepts come from three places, in this order: the matching row in
-`rules.json`; the comment block on the matching step in the generated `deploy.sh`; and, for the
-preflight concepts below, the fixed paragraphs in this file.
+## 1. Discover the app
 
-## Preflight concepts (fixed text)
+Start with the user's stated scope and the current repository. Inspect source, Dockerfiles, dependencies,
+CI/CD, infrastructure, configuration names, health endpoints, and existing tests. Ask what matters only
+if not already known: acceptable downtime, cost ceiling, data location constraints, and who can approve
+production changes. Offer a reasonable default with its consequence.
 
-- **gcloud** is Google Cloud's command-line tool, the equivalent of the aws CLI. Install:
-  https://docs.cloud.google.com/sdk/docs/install-sdk. Log in with `gcloud auth login`.
-- **A project** is the container for everything you create on Google Cloud, like an AWS
-  account. It must have **billing enabled** before Cloud Run will deploy anything. Creating one:
-  https://docs.cloud.google.com/resource-manager/docs/creating-managing-projects. A staging deploy
-  of one small service costs cents per day while it runs; the closing report tells you how to
-  delete it.
-- **Docker** is needed only when the image lives in ECR, to copy it. Install:
-  https://docs.docker.com/get-started/get-docker/.
-- **Public access.** Granting the Cloud Run Invoker role to `allUsers` lets anyone on the internet
-  call the service without logging in. The staging deploy never does this; it is a separate,
-  explained confirmation after the smoke test. Docs:
-  https://docs.cloud.google.com/run/docs/authenticating/public
+Check `aws sts get-caller-identity` and the configured region/profile. If the user does not know service
+names, use `aws ecs list-clusters`, `list-services`, and `describe-services` to find candidates. Confirm
+which application when there are unrelated services. Do not require gcloud, billing, or Docker just to
+assess AWS. Inventory each service belonging to the application:
 
-## Phase 1: Preflight
-
-Run and report, in this order. Stop at the first missing item, explain it with the paragraph
-above, and wait.
-
-1. `aws sts get-caller-identity` — report the account and identity. Region comes from the
-   profile; ask only if unset.
-2. `gcloud auth list` and `gcloud config get project` — if gcloud is missing or not logged in,
-   stop. If no project is set, ask which project to use; do not create one.
-3. `gcloud billing projects describe <project>` — if billing is not enabled, stop.
-4. `docker --version` — record whether it is present. If it is missing and Phase 2 shows the
-   image is in ECR, stop then and explain with the Docker paragraph above.
-5. Ask for: ECS cluster name, service name, and the path to the service's source tree. If the
-   user has no source, record that; SDK-usage findings will be needs-investigation.
-
-## Phase 2: Inventory
-
+```bash
+python3 "$SKILL_DIR/scripts/inventory.py" --cluster CLUSTER --service SERVICE --region REGION --out inventory.json
 ```
-python3 $SKILL_DIR/scripts/inventory.py --cluster <cluster> --service <service> [--region <region>] --out inventory.json
+
+Environment values are withheld by default. After reviewing configuration names and source usage,
+repeat with `--include-env NAME` for explicitly non-secret values that are needed. Do not dump raw task
+definitions or credential-bearing URLs into the conversation. Other configuration fields use best-effort
+redaction; treat inventories as sensitive and inspect what you share.
+
+Follow the evidence beyond the inventory helper: ALB listeners/rules, service discovery, security groups,
+routes, autoscaling, schedules, running image digests, database endpoints, queues, storage, outbound IP
+allowlists, and AWS SDK calls. Read `coverage.not_collected` and close applicable gaps yourself. Absence
+of a regex hit is not proof of absence. Avoid unrelated account-wide collection.
+
+## 2. Assess, then resolve
+
+```bash
+python3 "$SKILL_DIR/scripts/assess.py" --inventory inventory.json --src /path/to/app --out assessment.json
 ```
-Tell the user what was collected, how many secret-looking values (environment, labels, log
-options, command flags) were redacted, and every denied call by name. A denied call is a finding,
-not a gap to paper over.
 
-## Phase 3: Assess
+`references/rules.json` provides initial mappings, official links, and reviewed excerpts. Quotes support
+individual platform facts; they do not prove the application will work. The helper's internal
+`rollup: supported` means only that the checked fields map; its human-facing result is a candidate for
+validation. Review coverage limitations even for that result.
 
+For every unresolved finding, determine the underlying requirement, investigate current official AWS or
+Google documentation, and implement the resolution. Research is allowed and required when the bundled
+rules are insufficient or stale. Record the source, decision, and a test of the chosen behavior.
+
+Typical work includes rebuilding for Linux amd64; adapting startup, health checks and ports; migrating
+configuration; configuring private connectivity and identities; retaining AWS dependencies with appropriate
+authentication; or implementing and testing replacements when moving those dependencies is approved.
+Choose services, finite jobs, or worker pools based on actual execution behavior—not just exposed ports.
+If Cloud Run cannot satisfy a requirement, explain that specific mismatch and propose the smallest viable
+alternative. Do not silently replace the user's target or remove required functionality.
+
+Make local code changes and deployment artifacts yourself. Preserve the original inventory as evidence;
+never delete findings, alter the assessment verdict, or invent source facts to force the generator to pass.
+For workloads outside its mappings, author the correct configuration directly from verified documentation,
+with a finding-to-change record and tests. Do not weaken the reusable checks for one application.
+
+## 3. Prepare Google Cloud and secrets
+
+Now check gcloud authentication, destination project and billing, region, permissions, and Docker if needed.
+Select a region based on users, dependencies, data constraints, and available services. Explain and help
+perform sign-in/setup; leave interactive credentials to the user. Request narrowly scoped permissions for
+the chosen operations rather than requiring project Owner.
+
+Prepare a private validation service or isolated revision, real image, runtime identity, network, and
+required dependencies. Inspect any existing target service and IAM before modifying it. Default private
+creation does not prove an existing service is private. Keep a source configuration snapshot and use the
+running image digest when copying; pull/build for `linux/amd64` and verify the destination digest.
+
+For supported Secrets Manager/SSM references, plan the transfer (no provider calls or value reads):
+
+```bash
+python3 "$SKILL_DIR/scripts/transfer_secrets.py" --assessment assessment.json --project PROJECT
 ```
-python3 $SKILL_DIR/scripts/assess.py --inventory inventory.json --src <source-dir> --out assessment.json
+
+Explain which accounts and references will be read and which project will receive them. After explicit
+approval, enable Secret Manager if needed and run the same command with `--apply --versions-out secret-versions.json`.
+This helper preserves JSON-key/version selectors, sends values through pipes, and writes only destination
+version metadata. A repeat apply creates new versions; retain the returned metadata. If partial failure
+occurs, report which copies completed and resolve the cause before retrying. It never changes AWS secrets.
+
+Withheld plain environment values need a separate secure transfer into Secret Manager or an explicitly
+reviewed non-secret configuration value. Perform any approved transfer through a local process/pipe, not
+by displaying the values in a tool result. Never put credentials in command arguments, generated manifests,
+logs, or chat. Non-ARN references must be resolved to their full AWS ARNs before using the transfer helper.
+
+## 4. Deploy and verify
+
+For the simple HTTP path, once findings are resolved and required secret versions exist:
+
+```bash
+python3 "$SKILL_DIR/scripts/generate.py" --inventory inventory.json --assessment assessment.json \
+  --project PROJECT --region REGION --secret-versions secret-versions.json --out-dir out
 ```
-Omit `--src` if there is no source. Show the printed summary. Then, for each finding, restate it
-in plain words using the row's `explain`, and show the `url` and `quote`.
 
-Anything the rules do not recognize — a missing target-group protocol, a non-HTTP protocol, a UDP
-port, a gRPC/HTTP2 app protocol, a non-awslogs log driver, or any task-definition field with no
-matching rule — is reported as needs-investigation, never skipped. An ARM64 or Windows
-runtimePlatform is a rule row and rolls up blocked.
-If a command-line argument was redacted as secret-looking, its command mapping is withheld and
-flagged for review; tell the user they must re-supply that argument on Cloud Run themselves.
+Omit `--secret-versions` if the app has no secret references. Review the generated files and chosen target
+before executing destination changes. Run approved steps with `set -euo pipefail`. The script does not
+contain its own approval UI. For a manually adapted workload, apply and verify its reviewed artifacts instead.
 
-- Rollup (the worst verdict across all findings) **blocked**: explain what would unblock each
-  blocked finding (a job, a worker pool, a supported CPU/memory pair, the missing AWS
-  permission). Stop. No generation, no deploy.
-- Rollup **needs-investigation**: list what the user must verify. Say that those items will be
-  omitted from the manifest (`out/service.yaml`) with `# OMITTED:` markers. Ask whether to
-  continue.
-- Rollup **supported**: ask whether to continue.
+Do not stop at the generated HTTP smoke check. Run existing application tests and at least one real
+critical flow: authentication, a representative request, database access, queue processing, or file access,
+as applicable. Use isolated test data; prevent staging from sending real emails, charging customers, or
+competing for production work. Test timeouts, concurrency, scaling, background execution, and error paths.
+Compare results with the AWS baseline and record commands and outcomes without sensitive output.
 
-## Phase 4: Generate
+Fix failures and repeat the affected checks. Show what is verified and any remaining blocker. Do not
+invent successful deployment, performance, compatibility, or cross-agent validation results.
 
-```
-python3 $SKILL_DIR/scripts/generate.py --assessment assessment.json --inventory inventory.json --project <project> --region <region> --out-dir out
-```
-`generate.py` refuses to run — and the run stops — if the rollup is blocked, if the project id or
-region is invalid, if the image is an ECR Public image, if the ECS service name cannot be turned
-into a valid Cloud Run name, or when the image finding is not supported (for example its citation
-went stale); show that refusal message verbatim. Otherwise show `out/service.yaml` and
-`out/deploy.sh` in full. Walk through each `deploy.sh` step's comment block. Ask whether to proceed.
+## 5. Complete the approved migration
 
-## Phase 5: Staging deploy
+Use the production and rollback procedure in [migration-workflow.md](references/migration-workflow.md).
+Prepare exact commands for the actual front door, routing, data-writer ownership, monitoring, and rollback.
+Run read-only prechecks and show the user the concrete change, expected interruption, cost, and rollback
+boundary. Ask for production cutover approval only when the plan is ready to execute.
 
-Run `out/deploy.sh` **one step at a time, yourself**, not by executing the file. Every step's
-command is self-contained — it carries its own `--project` and `--region` — so run each one as
-printed in its own shell, with no environment setup beforehand. Before each step: say what it
-does, what it costs, and wait for yes. On any failure: stop, show the error verbatim, show the
-step's docs link. Never retry silently.
+After approval, execute it, verify traffic and critical application flows on the real hostname, observe
+agreed metrics, and roll back if the agreed thresholds fail. Keep AWS capacity available through the agreed
+rollback window. Update deployment automation so the next application release reaches the new target.
+AWS decommissioning is a later, separately approved operation with backups and dependency checks.
 
-The PAUSE step is the user's: print the `gcloud secrets versions add` commands and wait until
-they confirm every secret has a value. You never see or handle secret values.
-
-The smoke step calls the service with the user's own identity token. The service stays private.
-If the user wants a public URL, that is a separate confirmation after the smoke test, explained
-with the **Public access** paragraph above:
-`gcloud run services add-iam-policy-binding <service> --project <project> --region <region> --member=allUsers --role=roles/run.invoker`.
-
-## Closing report
-
-- Service URL and smoke result, with output.
-- Every remaining needs-investigation finding and every `# OMITTED:` item.
-- Not done, by design: production traffic, database migration, AWS teardown.
-- To stop paying: `gcloud run services delete <service> --project <project> --region <region>`.
-
-## Replaying a fixture (portability check)
-
-To exercise this workflow without an AWS account, start at Phase 3 with
-`--inventory $SKILL_DIR/fixtures/<name>/inventory.json --src $SKILL_DIR/fixtures/<name>/src`; if the rollup is not
-blocked, run Phase 4 with `--project my-project --region us-central1` (the golden values), then
-decline the first deploy.sh confirmation. No Google Cloud resource is created.
+Close with the working application URL, what moved, what intentionally remains in AWS, test evidence,
+operating/deployment instructions, actual remaining costs/resources, and rollback status. If access or a
+user decision prevents completion, name that specific blocker and the exact next action; do not call a
+staging deployment a completed migration.
