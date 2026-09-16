@@ -80,8 +80,8 @@ Status: pre-release. See `docs/superpowers/specs/` for the design.
 __pycache__/
 *.pyc
 /out/
-inventory.json
-assessment.json
+/inventory.json
+/assessment.json
 ```
 
 - [ ] **Step 4: Commit**
@@ -332,7 +332,7 @@ Every quote below was copied verbatim from the docs corpus snapshot of 2026-09-1
 ```bash
 python3 -c "import json; d=json.load(open('references/rules.json')); print(len(d['rules']), len(d['ignore']))"
 ```
-Expected: `17 27`
+Expected: `17 28`
 
 - [ ] **Step 3: Commit**
 
@@ -717,9 +717,9 @@ if __name__ == "__main__":
 
 ```bash
 touch tests/__init__.py
-python3 -m unittest tests.test_assess -v 2>&1 | tail -5
+python3 -m unittest tests.test_assess -v 2>&1 | grep -E 'ModuleNotFound|FAILED'
 ```
-Expected: `ModuleNotFoundError: No module named 'assess'`.
+Expected: `ModuleNotFoundError: No module named 'assess'` and `FAILED (errors=1)`.
 
 - [ ] **Step 3: Commit the failing test**
 
@@ -1825,7 +1825,7 @@ Expected: `OK` with all tests passing, four `ok scripts/...` lines, `deploy.sh p
 
 - [ ] **Step 2: Sync the two deviations into the spec**
 
-In section 7 "Generated artifacts", change the note that "steps 3 and 5 are skipped" for the demo fixture to: all four ECR-related steps (repository create, ECR login, Docker auth, image copy) are skipped when the image is not in ECR. In section 5 Phase 2, remove "target groups and listener rules" in favor of "target groups" only, and add a line under section 3 out-of-scope: "ALB listener rules and path routing (no v1 rule consumes them)".
+In section 7 "Generated artifacts", change the note that "steps 3 and 5 are skipped" for the demo fixture to: all four ECR-related steps (repository create, ECR login, Docker auth, image copy) are skipped when the image is not in ECR. In section 5 Phase 2, remove "target groups and listener rules" in favor of "target groups" only, and add a line under section 3 out-of-scope: "ALB listener rules and path routing (no v1 rule consumes them)". In section 7 "Generated artifacts", change "min/max instances, concurrency, timeout" to "min instances, timeout": max instances and concurrency have no rule row, so under the grounding rule the manifest leaves them at Cloud Run defaults.
 
 - [ ] **Step 3: Commit and tag**
 
