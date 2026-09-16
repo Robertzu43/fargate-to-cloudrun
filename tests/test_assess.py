@@ -129,6 +129,23 @@ class TestVerdicts(unittest.TestCase):
         self.assertEqual(roll, "needs-investigation")
         self.assertIn("targetGroups[].healthCheckProtocol=TCP", {f["subject"] for f in findings})
 
+    def test_tcp_traffic_target_group_is_not_covered(self):
+        def edit(inv):
+            inv["targetGroups"] = [{"targetGroupArn": "arn:tg", "protocol": "TCP", "healthCheckProtocol": "HTTP", "healthCheckPath": "/"}]
+        findings, roll = http_case(edit)
+        self.assertEqual(roll, "needs-investigation")
+        self.assertIn("targetGroups[].protocol=TCP", {f["subject"] for f in findings})
+        self.assertNotIn("health.http-probe", {f["rule"] for f in findings})
+
+    def test_mixed_target_groups_probe_http_and_flag_the_rest(self):
+        def edit(inv):
+            inv["targetGroups"] = [{"targetGroupArn": "arn:a", "protocol": "TCP", "healthCheckProtocol": "TCP"},
+                                   {"targetGroupArn": "arn:b", "protocol": "HTTP", "healthCheckProtocol": "HTTP", "healthCheckPath": "/hc"}]
+        findings, roll = http_case(edit)
+        self.assertEqual(roll, "needs-investigation")
+        self.assertEqual(next(f for f in findings if f["rule"] == "health.http-probe")["value"], "/hc")
+        self.assertIn("targetGroups[].protocol=TCP", {f["subject"] for f in findings})
+
     def test_port_prefers_load_balancer_container_port(self):
         def edit(inv):
             inv["taskDefinition"]["containerDefinitions"][0]["portMappings"] = [
@@ -153,10 +170,12 @@ class TestVerdicts(unittest.TestCase):
                 self.assertIn("resources.unsupported-pair", {f["rule"] for f in findings})
 
     def test_unparseable_size_is_blocked_not_an_exception(self):
-        findings, roll = http_case(lambda inv: inv["taskDefinition"].update(cpu=None))
-        self.assertEqual(roll, "blocked")
-        pair = next(f for f in findings if f["rule"] == "resources.unsupported-pair")
-        self.assertIn("missing or unparseable", pair["evidence"][0])
+        for cpu in (None, "1024abc"):
+            with self.subTest(cpu=cpu):
+                findings, roll = http_case(lambda inv: inv["taskDefinition"].update(cpu=cpu))
+                self.assertEqual(roll, "blocked")
+                pair = next(f for f in findings if f["rule"] == "resources.unsupported-pair")
+                self.assertIn("missing or unparseable", pair["evidence"][0])
 
     def test_stale_supported_rule_downgrades(self):
         rules = json.loads(json.dumps(RULES))
