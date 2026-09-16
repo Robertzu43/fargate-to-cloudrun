@@ -204,6 +204,14 @@ class TestVerdicts(unittest.TestCase):
         self.assertNotEqual(roll, "supported")
         self.assertIn("containerDefinitions[].linuxParameters", {f["subject"] for f in findings if f.get("reason") == "not-covered"})
 
+    def test_redacted_command_arg_is_not_covered(self):
+        def edit(inv):
+            inv["taskDefinition"]["containerDefinitions"][0]["command"] = ["serve", "--password=<redacted>"]
+        findings, roll = http_case(edit)
+        self.assertEqual(roll, "needs-investigation")
+        self.assertNotIn("container.command", [f["rule"] for f in findings])
+        self.assertIn("containerDefinitions[].command contains <redacted>", [f["subject"] for f in findings])
+
     def test_non_awslogs_driver_is_not_covered(self):
         def edit(inv):
             inv["taskDefinition"]["containerDefinitions"][0]["logConfiguration"] = {"logDriver": "splunk", "options": {}}
@@ -378,6 +386,44 @@ class TestInventoryHelpers(unittest.TestCase):
             {"Effect": "Deny", "Action": "iam:*", "Resource": "*"},
         ]}
         self.assertEqual(inventory.policy_actions(doc), ["s3:GetObject", "sqs:DeleteMessage", "sqs:ReceiveMessage"])
+
+    def test_scrub_redacts_labels_log_options_and_flags(self):
+        c = inventory.scrub({
+            "command": ["serve", "--password=hunter2", "--token", "abc123", "--verbose"],
+            "dockerLabels": {"com.example.api_key": "k", "com.example.team": "web"},
+            "logConfiguration": {"logDriver": "splunk", "options": {"splunk-token": "t", "splunk-url": "u"}},
+            "secrets": [{"name": "X", "valueFrom": "arn:aws:secretsmanager:us-east-1:1:secret:x"}],
+        })
+        self.assertEqual(c["command"], ["serve", "--password=<redacted>", "--token", "<redacted>", "--verbose"])
+        self.assertEqual(c["dockerLabels"], {"com.example.api_key": "<redacted>", "com.example.team": "web"})
+        self.assertEqual(c["logConfiguration"]["options"], {"splunk-token": "<redacted>", "splunk-url": "u"})
+        self.assertEqual(c["secrets"][0]["valueFrom"], "arn:aws:secretsmanager:us-east-1:1:secret:x")
+
+    def test_collect_matches_schedule_family_exactly_and_records_service_failures(self):
+        from unittest import mock
+        arn = "arn:aws:ecs:us-east-1:1:task-definition/"
+        calls = {
+            ("sts", "get-caller-identity"): {"Account": "1", "Arn": "arn:aws:iam::1:user/me"},
+            ("ecs", "describe-services"): {
+                "services": [{"taskDefinition": arn + "web:3", "clusterArn": "arn:aws:ecs:us-east-1:1:cluster/c"}],
+                "failures": [{"arn": "arn:aws:ecs:us-east-1:1:service/c/gone", "reason": "MISSING"}],
+            },
+            ("ecs", "describe-task-definition"): {"taskDefinition": {"family": "web", "containerDefinitions": []}},
+            ("events", "list-rule-names-by-target"): {"RuleNames": ["r-dd", "r-web", "r-web2", "r-web3"]},
+            ("events", "list-targets-by-rule"): lambda args: {"Targets": [{"EcsParameters": {"TaskDefinitionArn": arn + {
+                "r-dd": "web-dd:9", "r-web": "web", "r-web2": "web2:1", "r-web3": "web:3"}[args[3]]}}]},
+            ("events", "describe-rule"): lambda args: {"ScheduleExpression": f"rate(1 hour) {args[3]}"},
+        }
+
+        def fake(*args, region=None):
+            v = calls[(args[0], args[1])]
+            return v(args) if callable(v) else v
+
+        with mock.patch.object(inventory, "aws", fake), mock.patch.object(inventory, "DENIED", []):
+            inv = inventory.collect("c", "svc", "us-east-1")
+        self.assertEqual([s["name"] for s in inv["scheduledRules"]], ["r-web", "r-web3"])
+        self.assertEqual(inv["denied"], [{"call": "ecs describe-services",
+                                          "error": "arn:aws:ecs:us-east-1:1:service/c/gone: MISSING"}])
 
 
 if __name__ == "__main__":
