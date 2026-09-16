@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import unittest
@@ -60,6 +61,7 @@ class TestVerdicts(unittest.TestCase):
                 self.assertEqual(simplify(findings), expected["findings"])
 
     def test_no_false_pass(self):
+        self.assertEqual([n for n in FIXTURE_NAMES if run_fixture(n)[2] == "supported"], ["stateless-http"])
         for name in FIXTURE_NAMES:
             expected = load("fixtures", name, "expected.json")
             if expected["rollup"] == "supported":
@@ -94,6 +96,17 @@ class TestVerdicts(unittest.TestCase):
         inv["taskDefinition"]["runtimePlatform"] = {"cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX"}
         findings = assess.assess(inv, os.path.join(FIXTURES, "stateless-http", "src"), RULES)
         self.assertEqual(assess.rollup(findings), "supported")
+
+    def test_rules_schema(self):
+        rows = RULES["rules"]
+        self.assertEqual(len({r["id"] for r in rows}), len(rows))
+        for r in rows:
+            with self.subTest(rule=r.get("id")):
+                self.assertIn(r["verdict"], assess.ORDER)
+                for k in ("id", "explain", "url", "quote", "snapshot"):
+                    self.assertTrue(r.get(k), f"missing {k}")
+                self.assertTrue(r["url"].startswith("https://docs.cloud.google.com/run/"), r["url"])
+                self.assertIsInstance(r["stale"], bool)
 
     def test_rules_and_checks_match(self):
         with open(os.path.join(ROOT, "scripts", "assess.py")) as fh:
@@ -349,6 +362,7 @@ class TestGenerate(unittest.TestCase):
             pos = i
         self.assertIn(f'- image: "{target}"  # ecs:', yaml_text)
 
+    @unittest.skipUnless(shutil.which("bash"), "bash not available")
     def test_deploy_sh_parses(self):
         for edit in (lambda inv: None, set_image(ECR_IMAGE)):
             _, sh_text = gen(edit)

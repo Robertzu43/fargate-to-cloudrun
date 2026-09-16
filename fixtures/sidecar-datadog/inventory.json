@@ -20,6 +20,7 @@
         "image": "us-docker.pkg.dev/cloudrun/container/hello",
         "essential": true,
         "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+        "healthCheck": {"command": ["CMD-SHELL", "curl -f http://localhost:8080/ || exit 1"], "interval": 30, "timeout": 5, "retries": 3},
         "environment": [
           {"name": "APP_ENV", "value": "staging"},
           {"name": "API_KEY", "value": "<redacted>"}
