@@ -2,6 +2,8 @@ apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   name: "web"  # ecs: service=web
+  annotations:
+    run.googleapis.com/ingress: "all"  # stated explicitly: Cloud Run's own default lets any resource on the internet reach the service
 spec:
   template:
     metadata:
