@@ -2,13 +2,23 @@
 """Assess one ECS/Fargate service inventory for Cloud Run. Standard library only.
 
 Usage:
-  assess.py --inventory inventory.json [--src DIR] [--rules references/rules.json] [--out assessment.json]
+  assess.py --inventory inventory.json [--src DIR] [--rules references/rules.json]
+            [--resolutions resolutions.json] [--out assessment.json]
 
 Every finding that makes a claim about Cloud Run comes from a row in rules.json and carries that
 row's url and quote. Findings with reason denied, source-unavailable or not-covered are about AWS
 evidence and carry no citation. Reason `stale` marks a `supported` row whose citation failed doc
 drift: the finding downgrades to needs-investigation and keeps its url and quote.
 Supported findings describe checked fields only; inventory gaps and runtime validation remain explicit.
+
+A finding that cannot become supported by collecting more evidence -- a denied AWS call, an absent source
+tree, a field outside the mappings -- is adjudicated in a resolutions file, not by editing the assessment:
+
+  {"denied:ecs:DescribeServices": {"decision": "why this is safe to proceed without",
+                                   "evidence": ["what was checked instead"]}}
+
+Key is `rule` or `rule:subject`, exactly as the summary and the generator's refusal print it. A resolved
+finding keeps its original verdict in `original_verdict` and carries the decision into the assessment.
 """
 import argparse
 import hashlib
@@ -35,6 +45,7 @@ SDK_PATTERNS = [
 ]
 CS_NOT_SERVICES = {"runtime", "extensions", "util"}
 SKIP_DIRS = {".git", "node_modules", "vendor", "__pycache__", ".venv", "venv", "dist", "build"}
+ANNOTATION = re.compile(r"(?:^|\.)(?:NOTE|WARNING|_)")
 
 # Field paths the checks below evaluate, at three depths only: top-level taskDefinition keys,
 # containerDefinitions[] keys, and top-level service keys. Nested keys under a covered path are
@@ -82,12 +93,19 @@ def secret_name(value_from):
     return re.sub(r"[^A-Za-z0-9_-]", "-", tail).strip("-")
 
 
-def secret_mapping(s):
-    source = s["valueFrom"]
-    # Full reference includes the account, region, JSON selector, and version selector.
-    suffix = hashlib.sha256(source.encode()).hexdigest()[:16]
-    return {"name": s["name"], "secret": (secret_name(source) or "secret")[:200] + "-" + suffix,
-            "source": source}
+def secret_mappings(secrets):
+    """Destination ids for one container's secrets. Readable by default: the sha256 of the full
+    reference (which includes account, region, JSON selector and version selector) is appended only
+    where two sources normalize to the same id, so operators can recognize an id in the console."""
+    base = [(s, (secret_name(s["valueFrom"]) or "secret")[:200]) for s in secrets]
+    counts = {}
+    for _, b in base:
+        counts[b] = counts.get(b, 0) + 1
+    out = []
+    for s, b in base:
+        sid = b if counts[b] == 1 else b + "-" + hashlib.sha256(s["valueFrom"].encode()).hexdigest()[:16]
+        out.append({"name": s["name"], "secret": sid, "source": s["valueFrom"]})
+    return out
 
 
 def size_units(value):
@@ -159,7 +177,8 @@ def uncovered(inv, ignore):
             paths.add(k)
     paths.update(f"service.{k}" for k in inv.get("service", {}))
     skip = COVERED | set(ignore)
-    return sorted(p for p in paths if p not in skip)
+    # NOTE_/WARNING_/_ keys are the agent's own provenance notes on a hand-built inventory, not fields.
+    return sorted(p for p in paths if p not in skip and not ANNOTATION.search(p))
 
 
 def assess(inv, src_dir, rulesdoc):
@@ -271,6 +290,12 @@ def assess(inv, src_dir, rulesdoc):
         else:
             if tier != vcpu:
                 ev.append(f"Cloud Run cpu={tier} chosen for {vcpu:g} vCPU / {mib} MiB")
+            if vcpu < 1:
+                # This table starts at 1 vCPU, so every sub-vCPU task is silently rounded up.
+                ev.append(f"raises the allocation {tier / vcpu:g}x: the task is {vcpu:g} vCPU and this table's "
+                          "smallest tier is 1. Cloud Run also offers sub-vCPU allocations with their own "
+                          "concurrency and feature constraints -- verify current limits against measured "
+                          "utilization before accepting cpu=1")
             F.append(finding(R["resources.cpu-memory"], ev, value={"cpu": str(tier), "memory": f"{mib}Mi"}))
 
     # Health: a target group is HTTP only if it carries HTTP traffic AND has an HTTP health-check path.
@@ -304,7 +329,7 @@ def assess(inv, src_dir, rulesdoc):
     if safe_env:
         F.append(finding(R["config.env"], [f"containerDefinitions[{ing.get('name')}].environment ({len(safe_env)} reviewed values)"], value=safe_env))
     if ing.get("secrets"):
-        names = [secret_mapping(s) for s in ing["secrets"]]
+        names = secret_mappings(ing["secrets"])
         F.append(finding(R["secrets.env"], [f"containerDefinitions[{ing.get('name')}].secrets[].valueFrom={s['valueFrom']}" for s in ing["secrets"]], value=names))
 
     # Storage
@@ -344,6 +369,45 @@ def assess(inv, src_dir, rulesdoc):
     return F
 
 
+def finding_key(f):
+    """The identity a resolution addresses, printed identically by the summary and the generator."""
+    return f["rule"] + (":" + f["subject"] if f.get("subject") else "")
+
+
+def load_resolutions(path):
+    with open(path) as fh:
+        doc = json.load(fh)
+    if not isinstance(doc, dict):
+        raise SystemExit(f"{path}: expected an object mapping finding key -> resolution")
+    for k, v in doc.items():
+        if not isinstance(v, dict) or not str(v.get("decision", "")).strip():
+            raise SystemExit(f"{path}: resolution for {k!r} needs a non-empty \"decision\"")
+    return doc
+
+
+def apply_resolutions(findings, resolutions):
+    """Mark adjudicated findings supported, preserving what they were and why they were cleared.
+
+    An unmatched key is an error: it means the inventory changed under a resolution written for an
+    earlier run, and silently ignoring it would let a stale adjudication clear nothing while looking
+    like it cleared something."""
+    used = set()
+    for f in findings:
+        k = finding_key(f)
+        if f["verdict"] == "supported" or k not in resolutions:
+            continue
+        r = resolutions[k]
+        used.add(k)
+        f["original_verdict"] = f["verdict"]
+        f["verdict"] = "supported"
+        f["resolved"] = {"decision": r["decision"], "evidence": list(r.get("evidence", []))}
+    unmatched = sorted(set(resolutions) - used)
+    if unmatched:
+        raise SystemExit("resolution keys match no open finding (re-check against the current assessment): "
+                         + ", ".join(unmatched))
+    return findings
+
+
 def rollup(findings):
     if not findings:
         return "blocked"
@@ -357,6 +421,14 @@ def inventory_hash(inv):
 def summary(findings, roll):
     label = "candidate-for-validation" if roll == "supported" else roll
     out = [f"RESULT: {label}", "Field mappings are not proof of runtime compatibility or production readiness.", ""]
+    resolved = [f for f in findings if f.get("resolved")]
+    if resolved:
+        out.append(f"== resolved by decision ({len(resolved)}) -- adjudicated, not re-checked")
+        for f in resolved:
+            out.append(f"- {finding_key(f)} (was {f['original_verdict']}): {f['resolved']['decision']}")
+            for e in f["resolved"]["evidence"]:
+                out.append(f"    evidence: {e}")
+        out.append("")
     for v in ("blocked", "needs-investigation", "supported"):
         group = [f for f in findings if f["verdict"] == v]
         if not group:
@@ -381,6 +453,8 @@ def main():
     ap.add_argument("--inventory", required=True)
     ap.add_argument("--src", help="path to the service's source tree; omit if unavailable")
     ap.add_argument("--rules", default=DEFAULT_RULES)
+    ap.add_argument("--resolutions", help="JSON mapping finding key -> {decision, evidence[]} for findings "
+                                          "adjudicated by a human; see the module docstring")
     ap.add_argument("--out", default="assessment.json")
     a = ap.parse_args()
     with open(a.inventory) as fh:
@@ -388,12 +462,15 @@ def main():
     with open(a.rules) as fh:
         rulesdoc = json.load(fh)
     findings = assess(inv, a.src, rulesdoc)
+    if a.resolutions:
+        findings = apply_resolutions(findings, load_resolutions(a.resolutions))
     roll = rollup(findings)
     with open(a.out, "w") as fh:
         json.dump({"meta": inv.get("meta", {}), "rollup": roll, "findings": findings,
                    "inventory_sha256": inventory_hash(inv),
                    "readiness": "candidate-for-validation" if roll == "supported" else roll,
                    "coverage": inv.get("coverage", {}),
+                   "resolved": [finding_key(f) for f in findings if f.get("resolved")],
                    "limitations": ["SDK scan is heuristic; no matches do not prove absence of dependencies.",
                                    "Runtime behavior, concurrency, background work, networking, and data consistency require validation."]}, fh, indent=2)
     print(summary(findings, roll))

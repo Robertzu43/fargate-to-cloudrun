@@ -143,3 +143,91 @@ class MigrationRegressions(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ResolutionRegressions(unittest.TestCase):
+    """A finding that no amount of further collection can turn into `supported` -- a denied AWS call,
+    an absent source tree -- used to lock the generator out of every real service permanently."""
+
+    def denied(self):
+        inv = copy.deepcopy(BASE)
+        inv['denied'] = [{'call': 'ecs:DescribeServices', 'error': 'AccessDenied'}]
+        return inv, assess.assess(inv, SRC, RULES)
+
+    def test_denied_call_blocks_until_adjudicated(self):
+        _, findings = self.denied()
+        self.assertEqual(assess.rollup(findings), 'blocked')
+
+    def test_resolution_clears_the_finding_and_records_why(self):
+        inv, findings = self.denied()
+        findings = assess.apply_resolutions(findings, {
+            'denied:ecs:DescribeServices': {'decision': 'read from the exported service JSON instead',
+                                            'evidence': ['service.json sha256 abc']}})
+        f = next(f for f in findings if f['rule'] == 'denied')
+        self.assertEqual(assess.rollup(findings), 'supported')
+        self.assertEqual(f['original_verdict'], 'blocked')
+        self.assertEqual(f['resolved']['decision'], 'read from the exported service JSON instead')
+        generate.generate({'meta': inv['meta'], 'rollup': 'supported', 'findings': findings}, inv,
+                          'my-project', 'us-central1',
+                          secret_versions={s['secret']: '1' for f in findings
+                                           if f['rule'] == 'secrets.env' for s in f['value']})
+
+    def test_stale_resolution_is_an_error_not_a_silent_noop(self):
+        _, findings = self.denied()
+        with self.assertRaises(SystemExit):
+            assess.apply_resolutions(findings, {'denied:ecs:DescribeTasks': {'decision': 'x'}})
+
+    def test_resolution_without_a_decision_is_rejected(self):
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as fh:
+            json.dump({'denied:ecs:DescribeServices': {'evidence': ['x']}}, fh)
+        self.addCleanup(os.unlink, fh.name)
+        with self.assertRaises(SystemExit):
+            assess.load_resolutions(fh.name)
+
+    def test_resolved_findings_are_visible_in_the_summary(self):
+        _, findings = self.denied()
+        findings = assess.apply_resolutions(findings, {
+            'denied:ecs:DescribeServices': {'decision': 'exported JSON used instead'}})
+        out = assess.summary(findings, assess.rollup(findings))
+        self.assertIn('resolved by decision', out)
+        self.assertIn('exported JSON used instead', out)
+
+
+class InventoryAnnotationRegressions(unittest.TestCase):
+    def test_provenance_notes_are_not_findings(self):
+        """A hand-built inventory has to be able to say where it came from without earning findings
+        that then block the generator."""
+        inv = copy.deepcopy(BASE)
+        inv['taskDefinition']['WARNING_image'] = 'IaC-declared, not the deployed image'
+        inv['taskDefinition']['containerDefinitions'][0]['NOTE_secrets'] = 'ARNs are placeholders'
+        inv['_provenance'] = 'hand-built from OpenTofu'
+        self.assertEqual(result(inv)['rollup'], 'supported')
+
+
+class SecretIdRegressions(unittest.TestCase):
+    def test_ids_stay_readable_when_nothing_collides(self):
+        """Operators have to recognize an id in the Secret Manager console."""
+        mapped = assess.secret_mappings([
+            {'name': 'A', 'valueFrom': 'arn:aws:secretsmanager:us-east-1:1:secret:app/db-url-AbCdEf'}])
+        self.assertEqual(mapped[0]['secret'], 'app-db-url')
+
+    def test_colliding_sources_still_get_distinct_ids(self):
+        prefix = 'arn:aws:secretsmanager:us-east-1:1:secret:db-AbCdEf'
+        mapped = assess.secret_mappings([{'name': 'U', 'valueFrom': prefix + ':username::'},
+                                         {'name': 'P', 'valueFrom': prefix + ':password::'}])
+        self.assertNotEqual(mapped[0]['secret'], mapped[1]['secret'])
+        self.assertTrue(all(m['secret'].startswith('db-') for m in mapped))
+
+
+class ResourceRegressions(unittest.TestCase):
+    def test_sub_vcpu_task_says_how_far_it_was_raised(self):
+        """0.25 vCPU silently becoming 1 is a 4x cost and behavior change."""
+        inv = copy.deepcopy(BASE)
+        inv['taskDefinition']['cpu'] = '256'
+        inv['taskDefinition']['memory'] = '512'
+        f = next(f for f in result(inv)['findings'] if f['rule'] == 'resources.cpu-memory')
+        self.assertTrue(any('raises the allocation 4x' in e for e in f['evidence']), f['evidence'])
+        y, _ = generate.generate(result(inv), inv, 'my-project', 'us-central1',
+                                 secret_versions={s['secret']: '1' for g in result(inv)['findings']
+                                                  if g['rule'] == 'secrets.env' for s in g['value']})
+        self.assertIn('raises the allocation 4x', y)

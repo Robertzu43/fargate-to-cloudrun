@@ -17,12 +17,12 @@ gcloud iam service-accounts describe web-run@my-project.iam.gserviceaccount.com 
 # ---- Step 3: Grant the runtime service account access to each secret
 # The docs: to allow Cloud Run to access the secret, the service identity must have the Secret Manager Secret Accessor role.
 # Docs: https://docs.cloud.google.com/run/docs/configuring/services/secrets
-for s in prod-db-url-c8c8579321312e44; do gcloud secrets add-iam-policy-binding "$s" --member=serviceAccount:web-run@my-project.iam.gserviceaccount.com --role=roles/secretmanager.secretAccessor --project=my-project >/dev/null; done
+for s in prod-db-url; do gcloud secrets add-iam-policy-binding "$s" --member=serviceAccount:web-run@my-project.iam.gserviceaccount.com --role=roles/secretmanager.secretAccessor --project=my-project >/dev/null; done
 
 # ---- Step 4: Verify every pinned secret version is enabled
 # Import the approved secrets before deployment, then regenerate with --secret-versions. This check reads metadata only.
 # Docs: https://docs.cloud.google.com/run/docs/configuring/services/secrets
-test "$(gcloud secrets versions describe 1 --secret=prod-db-url-c8c8579321312e44 --project=my-project --format='value(state)')" = ENABLED
+test "$(gcloud secrets versions describe 1 --secret=prod-db-url --project=my-project --format='value(state)')" = ENABLED
 
 # ---- Step 5: Deploy the service from service.yaml
 # gcloud run services replace applies the manifest; the first run creates the service, later runs create a new revision.

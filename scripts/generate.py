@@ -2,9 +2,11 @@
 """Generate service.yaml and deploy.sh from assessment.json + inventory.json. Standard library only.
 
 Usage:
-  generate.py --assessment assessment.json --inventory inventory.json --project P --region R [--out-dir out]
+  generate.py --inventory inventory.json --assessment assessment.json --project P --region R [--out-dir out]
 
-Refuses (exit 2) when findings are unresolved or secret versions are unspecified.
+Refuses (exit 2) when findings are unresolved or secret versions are unspecified. A finding that cannot
+become supported by collecting more evidence is cleared through assess.py --resolutions, which records the
+decision in the assessment; it is never cleared by editing findings by hand.
 Produces configuration for validation, not certification of production readiness. No network calls.
 """
 import argparse
@@ -100,9 +102,10 @@ def generate(assessment, inv, project, region, out_dir="out", secret_versions=No
             y.append(f"        args: {json.dumps(v['args'], ensure_ascii=False)}  # ecs: command [container.command]")
     if "resources.cpu-memory" in sup:
         v = sup["resources.cpu-memory"]["value"]
-        ev = sup["resources.cpu-memory"]["evidence"][0]
+        ev = sup["resources.cpu-memory"]["evidence"]
         y += ["        resources:", "          limits:",
-              f"            cpu: {q(v['cpu'])}  # ecs: {ev} [resources.cpu-memory]",
+              *[f"          # {e}" for e in ev[1:]],
+              f"            cpu: {q(v['cpu'])}  # ecs: {ev[0]} [resources.cpu-memory]",
               f"            memory: {v['memory']}"]
     if env or secrets:
         y.append("        env:")
