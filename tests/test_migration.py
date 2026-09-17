@@ -231,3 +231,32 @@ class ResourceRegressions(unittest.TestCase):
                                  secret_versions={s['secret']: '1' for g in result(inv)['findings']
                                                   if g['rule'] == 'secrets.env' for s in g['value']})
         self.assertIn('raises the allocation 4x', y)
+
+
+class LiveServiceShapeRegressions(unittest.TestCase):
+    """describe-services returns far more than the fixtures carried. Control-plane bookkeeping must not
+    become findings that block the generator, and the fields that do decide a migration must survive."""
+
+    LIVE_ONLY = {'availabilityZoneRebalancing': 'DISABLED', 'currentServiceRevisions': [{'arn': 'x'}],
+                 'deploymentController': {'type': 'ECS'}, 'enableECSManagedTags': True,
+                 'placementConstraints': [], 'placementStrategy': [], 'platformFamily': 'Linux',
+                 'platformVersion': 'LATEST', 'propagateTags': 'SERVICE', 'resourceManagementType': 'CUSTOMER',
+                 'roleArn': 'arn:aws:iam::1:role/aws-service-role/ecs.amazonaws.com/AWSServiceRoleForECS',
+                 'schedulingStrategy': 'REPLICA'}
+    MEANINGFUL = {'serviceRegistries': [{'registryArn': 'arn:aws:servicediscovery:us-east-1:1:service/srv-1'}],
+                  'healthCheckGracePeriodSeconds': 120,
+                  'deploymentConfiguration': {'maximumPercent': 200},
+                  'enableExecuteCommand': True}
+
+    def uncovered_for(self, extra):
+        inv = copy.deepcopy(BASE)
+        inv['service'].update(extra)
+        return {f['subject'] for f in result(inv)['findings'] if f['rule'] == 'not-covered'}
+
+    def test_control_plane_fields_are_not_findings(self):
+        self.assertEqual(self.uncovered_for(self.LIVE_ONLY), set())
+
+    def test_fields_that_decide_a_migration_stay_findings(self):
+        found = self.uncovered_for(self.MEANINGFUL)
+        for k in self.MEANINGFUL:
+            self.assertIn('service.' + k, found)
