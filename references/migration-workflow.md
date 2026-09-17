@@ -24,6 +24,8 @@ and network path; replacing it requires code, data/semantic mapping, and tests.
 | Queue/events | Delivery semantics, consumer identity, duplicate handling, ordering, retries, dead letters, schedules, and preventing two active consumers from double-processing. |
 | Files | Persistence, locking, permissions, throughput and backup. Do not replace file storage with object storage without checking application semantics. |
 | Sidecars | Actual responsibility, required startup order, shared resources, credentials and platform alternatives. Do not omit a required sidecar. |
+| Front-door auth | Authentication terminated at the load balancer (`authenticate-cognito`, `authenticate-oidc`) does not move with the container: Cloud Run cannot be an ALB target. Map it to a Google load balancer with IAP or to application-level auth, carry every deliberate path exemption across as an explicit rule, and tell the user plainly if the move takes the service out of a shared sign-in. |
+| Inbound schedules | A trigger outside AWS -- a database extension, a SaaS webhook, a partner cron -- is invisible in the account and has to be repointed at cutover, with the old endpoint kept until it is. |
 | Network/security | ALB listeners and auth, routing, private endpoints, security groups, outbound IPs, allowlists, service discovery, ingress/IAM. Public IP enabled does not imply no private dependencies. |
 | Operations | Image build/release workflow, logs/metrics/alerts, autoscaling, quotas, cost baseline, graceful termination and on-call access. |
 

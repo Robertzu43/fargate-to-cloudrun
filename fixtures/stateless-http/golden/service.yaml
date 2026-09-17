@@ -16,6 +16,8 @@ spec:
         - containerPort: 8080  # ecs: portMappings[].containerPort [container.port]
         resources:
           limits:
+          # Cloud Run cpu=1 chosen for 0.5 vCPU / 1024 MiB
+          # raises the allocation 2x: the task is 0.5 vCPU and this table's smallest tier is 1. Cloud Run also offers sub-vCPU allocations with their own concurrency and feature constraints -- verify current limits against measured utilization before accepting cpu=1
             cpu: "1"  # ecs: cpu=512 memory=1024 [resources.cpu-memory]
             memory: 1024Mi
         env:
@@ -26,7 +28,7 @@ spec:
         - name: "DATABASE_URL"
           valueFrom:
             secretKeyRef:
-              name: "prod-db-url-c8c8579321312e44"
+              name: "prod-db-url"
               key: "1"  # pinned Secret Manager version
         startupProbe:
           # Cloud Run probe timing defaults apply (periodSeconds 10, failureThreshold 3, timeoutSeconds 1); the v1 inventory carries no ECS health-check timing

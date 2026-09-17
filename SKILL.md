@@ -19,7 +19,13 @@ it does not mean stop helping or tell the user to learn Google Cloud.
 
 ## Working files and authorization
 
-`$SKILL_DIR` is the directory containing this file. Use a migration working directory in the user's
+Export `$SKILL_DIR` once; every command below uses it:
+
+```bash
+export SKILL_DIR=/path/to/fargate-to-cloudrun   # the directory containing this file
+```
+
+Use a migration working directory in the user's
 project, with a separate subdirectory for each service. Keep raw inventories, assessments, credentials,
 and deployment state out of version control. Read-only discovery and local preparation need no additional
 confirmation within the requested scope.
@@ -40,6 +46,12 @@ CI/CD, infrastructure, configuration names, health endpoints, and existing tests
 if not already known: acceptable downtime, cost ceiling, data location constraints, and who can approve
 production changes. Offer a reasonable default with its consequence.
 
+Infrastructure-as-code describes what was declared, not what is running. A task definition in Terraform,
+CDK or CloudFormation may carry a placeholder image, a size the service never adopted, or a revision the
+service ignores. Read it for intent and for the things the AWS API does not expose, then take the inventory
+from the live service. If you cannot reach the AWS API, say the inventory is unverified and record how it
+was built -- do not present a declared task definition as the deployed one.
+
 Check `aws sts get-caller-identity` and the configured region/profile. If the user does not know service
 names, use `aws ecs list-clusters`, `list-services`, and `describe-services` to find candidates. Confirm
 which application when there are unrelated services. Do not require gcloud, billing, or Docker just to
@@ -59,6 +71,19 @@ routes, autoscaling, schedules, running image digests, database endpoints, queue
 allowlists, and AWS SDK calls. Read `coverage.not_collected` and close applicable gaps yourself. Absence
 of a regex hit is not proof of absence. Avoid unrelated account-wide collection.
 
+Two gaps are common enough to check by name, because nothing in the inventory will raise them:
+
+- **Who authenticates the user?** An `authenticate-cognito` or `authenticate-oidc` listener action means the
+  application never implemented its own login and an ALB has been gating it. Cloud Run cannot be an ALB
+  target, so this becomes a Google load balancer with IAP, or application-level auth. Find any path that is
+  deliberately exempt today (a webhook, a cron endpoint, a health check) -- each exemption has to survive
+  the move as an explicit rule, and a single identity provider shared by several services means migrating
+  one service can remove its users from that shared sign-in.
+- **What triggers the periodic work?** Not every schedule is an EventBridge rule. A database extension, an
+  external SaaS webhook, a partner cron, or another service can call in over HTTP on a timer, and none of
+  them appear anywhere in the AWS account. Ask what calls this service and from where, and repoint each
+  caller at cutover.
+
 ## 2. Assess, then resolve
 
 ```bash
@@ -73,6 +98,24 @@ validation. Review coverage limitations even for that result.
 For every unresolved finding, determine the underlying requirement, investigate current official AWS or
 Google documentation, and implement the resolution. Research is allowed and required when the bundled
 rules are insufficient or stale. Record the source, decision, and a test of the chosen behavior.
+
+Some findings cannot be cleared by collecting more evidence: a denied AWS call, a source tree you cannot
+read, a field outside the mappings that you have investigated and judged safe. Adjudicate those in a
+resolutions file and re-run the assessment with it. The decision is recorded in the assessment and printed
+above the findings; it is never made by editing findings by hand.
+
+```bash
+cat > resolutions.json <<'JSON'
+{"denied:ecs:DescribeServices": {"decision": "service read from an operator-exported service.json",
+                                 "evidence": ["service.json sha256 ...", "desiredCount confirmed with the owner"]}}
+JSON
+python3 "$SKILL_DIR/scripts/assess.py" --inventory inventory.json --src /path/to/app \
+  --resolutions resolutions.json --out assessment.json
+```
+
+The key is `rule` or `rule:subject`, exactly as the summary and the generator's refusal print it. A key that
+matches no open finding is an error, not a no-op: the inventory changed and the decision needs re-checking.
+Resolve a finding because you established the answer, never to make the generator proceed.
 
 Typical work includes rebuilding for Linux amd64; adapting startup, health checks and ports; migrating
 configuration; configuring private connectivity and identities; retaining AWS dependencies with appropriate
@@ -103,6 +146,11 @@ For supported Secrets Manager/SSM references, plan the transfer (no provider cal
 ```bash
 python3 "$SKILL_DIR/scripts/transfer_secrets.py" --assessment assessment.json --project PROJECT
 ```
+
+A secret that exists with no version -- common where infrastructure code creates the container and the
+value is set out of band -- cannot be read, and the helper reports the provider error in summary form.
+Confirm each source secret has a version before the transfer, and check that the identity running it can
+read values at all; a plan-only or CI role often deliberately cannot.
 
 Explain which accounts and references will be read and which project will receive them. After explicit
 approval, enable Secret Manager if needed and run the same command with `--apply --versions-out secret-versions.json`.
