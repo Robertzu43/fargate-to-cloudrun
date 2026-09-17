@@ -16,7 +16,7 @@ import re
 import shlex
 from assess import inventory_hash
 
-REPO = "fargate-to-cloudrun"
+DEFAULT_REPO = "cloud-run"
 DOCS = {
     "apis": "https://docs.cloud.google.com/run/docs/setup",
     "registry": "https://docs.cloud.google.com/run/docs/deploying",
@@ -33,7 +33,7 @@ def q(s):
     return json.dumps(str(s), ensure_ascii=False)
 
 
-def names(service, project, region, src_image):
+def names(service, project, region, src_image, repo=DEFAULT_REPO, digest=None):
     """Derive Cloud Run / IAM / Artifact Registry identifiers from the ECS service name and image."""
     slug = re.sub(r"[^a-z0-9-]+", "-", service.lower()).strip("-")[:49]
     sa_id = (slug + "-run")[:30].rstrip("-")
@@ -45,12 +45,18 @@ def names(service, project, region, src_image):
     is_ecr = bool(m)
     return {
         "slug": slug, "sa_id": sa_id, "sa_email": f"{sa_id}@{project}.iam.gserviceaccount.com",
-        "image": f"{region}-docker.pkg.dev/{project}/{REPO}/{slug}:migrated" if is_ecr else src_image,
+        # The copy is pushed under a tag, but the manifest pins the DIGEST when one was collected:
+        # a tag can be repointed after the revision is created, a digest cannot.
+        "tag": f"{region}-docker.pkg.dev/{project}/{repo}/{slug}:migrated" if is_ecr else src_image,
+        "image": (f"{region}-docker.pkg.dev/{project}/{repo}/{slug}@{digest}" if is_ecr and digest
+                  else (f"{region}-docker.pkg.dev/{project}/{repo}/{slug}:migrated" if is_ecr else src_image)),
+        "repo": repo, "digest": digest,
         "is_ecr": is_ecr, "ecr_host": m.group(1) if m else None, "ecr_region": m.group(2) if m else None,
     }
 
 
-def generate(assessment, inv, project, region, out_dir="out", secret_versions=None):
+def generate(assessment, inv, project, region, out_dir="out", secret_versions=None,
+             repo=DEFAULT_REPO, min_instances=0):
     if assessment.get("inventory_sha256") and assessment["inventory_sha256"] != inventory_hash(inv):
         raise SystemExit("assessment belongs to a different inventory; re-run assessment")
     unresolved = [f for f in assessment["findings"] if f["verdict"] != "supported"]
@@ -66,7 +72,8 @@ def generate(assessment, inv, project, region, out_dir="out", secret_versions=No
     src_image = sup.get("container.image", {}).get("value")
     if not src_image:
         raise SystemExit("refusing to generate: container.image is not a supported finding with a value")
-    n = names(service, project, region, src_image)
+    digest = (inv.get("imageDigests") or {}).get(src_image)
+    n = names(service, project, region, src_image, repo, digest)
     slug, sa_id, sa, image = n["slug"], n["sa_id"], n["sa_email"], n["image"]
     port = sup["container.port"]["value"] if "container.port" in sup else 8080
     env = sup.get("config.env", {}).get("value", [])
@@ -86,7 +93,8 @@ def generate(assessment, inv, project, region, out_dir="out", secret_versions=No
     if "scaling.min-instances" in sup:
         f = sup["scaling.min-instances"]
         y += ["    metadata:", "      annotations:",
-              f"        autoscaling.knative.dev/minScale: {q(f['value'])}  # ecs: service.desiredCount [scaling.min-instances] {f['explain']}"]
+              f"        autoscaling.knative.dev/minScale: {q(min_instances)}"
+              f"  # ecs: service.desiredCount={f['value']} [scaling.min-instances] {f['explain']}"]
     y += ["    spec:", f"      serviceAccountName: {sa}  # created in deploy.sh; the runtime identity"]
     if "timeout.request" in sup:
         f = sup["timeout.request"]
@@ -136,7 +144,7 @@ def generate(assessment, inv, project, region, out_dir="out", secret_versions=No
         step("Create the Artifact Registry repository if it does not exist",
              "Artifact Registry is Google Cloud's container registry; Cloud Run pulls images from it. Storage is billed per GiB.",
              DOCS["registry"],
-             f'gcloud artifacts repositories describe {REPO} --location={region} {proj} >/dev/null 2>&1 || gcloud artifacts repositories create {REPO} --repository-format=docker --location={region} {proj}')
+             f'gcloud artifacts repositories describe {n["repo"]} --location={region} {proj} >/dev/null 2>&1 || gcloud artifacts repositories create {n["repo"]} --repository-format=docker --location={region} {proj}')
         step("Log Docker in to ECR (read-only on AWS: this only obtains a pull token)",
              "The image is pulled from your existing ECR repository; nothing on AWS is changed.",
              DOCS["registry"],
@@ -148,7 +156,12 @@ def generate(assessment, inv, project, region, out_dir="out", secret_versions=No
         step("Copy the image from ECR to Artifact Registry",
              "Cloud Run needs the image in Artifact Registry. The image is copied, not rebuilt.",
              DOCS["registry"],
-             f"docker pull --platform linux/amd64 {shlex.quote(src_image)}", f"docker tag {shlex.quote(src_image)} {image}", f"docker push {image}")
+             f"docker pull --platform linux/amd64 {shlex.quote(src_image)}", f"docker tag {shlex.quote(src_image)} {n['tag']}", f"docker push {n['tag']}")
+        if n["digest"]:
+            step("Verify the copy is the same image",
+                 "The manifest pins this digest. If the copy differs, the revision would run something other than what was assessed.",
+                 DOCS["registry"],
+                 f"test \"$(gcloud artifacts docker images describe {n['tag']} {proj} --format='value(image_summary.digest)')\" = {shlex.quote(n['digest'])}")
     step("Create the runtime service account if it does not exist",
          "Every Cloud Run service runs as a Google service account, its identity when calling Google APIs. It carries no AWS credentials.",
          DOCS["identity"],
@@ -201,6 +214,12 @@ def main():
     ap.add_argument("--region", required=True)
     ap.add_argument("--out-dir", default="out")
     ap.add_argument("--secret-versions", help="JSON mapping destination secret ids to verified numeric versions")
+    ap.add_argument("--registry-repo", default=DEFAULT_REPO,
+                    help=f"Artifact Registry repository to copy the image into (default: {DEFAULT_REPO}). "
+                         "Point this at an existing repo to avoid creating one per migration.")
+    ap.add_argument("--min-instances", type=int, default=0,
+                    help="Cloud Run minScale (default: 0). The ECS desired count is reported as evidence, "
+                         "not copied: a fixed task count is not a floor on idle instances.")
     a = ap.parse_args()
     with open(a.assessment) as fh:
         assessment = json.load(fh)
@@ -211,7 +230,8 @@ def main():
         if a.secret_versions:
             with open(a.secret_versions) as fh:
                 versions = json.load(fh)
-        yaml_text, sh_text = generate(assessment, inv, a.project, a.region, a.out_dir, versions)
+        yaml_text, sh_text = generate(assessment, inv, a.project, a.region, a.out_dir, versions,
+                                      a.registry_repo, a.min_instances)
     except SystemExit as e:
         print(e)
         raise SystemExit(2)

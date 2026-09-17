@@ -235,7 +235,7 @@
       "ecs_field": "service.desiredCount",
       "cloudrun_field": "spec.template.metadata.annotations autoscaling.knative.dev/minScale",
       "verdict": "supported",
-      "explain": "The initial minimum uses the ECS desired count. This is a migration policy choice, not equivalent autoscaling; review idle cost, concurrency, maximum instances, and background CPU before deploying.",
+      "explain": "ECS desiredCount is a fixed task count; Cloud Run scales on demand, so the count is reported as evidence and minScale defaults to 0. Raise it with --min-instances only to buy away cold starts, and weigh idle cost, concurrency, maximum instances and background CPU before doing so.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/min-instances",
       "quote": "With minimum instances set, Cloud Run keeps at least the number of minimum instances running, even if they're not processing requests.",
       "snapshot": "2026-09-12",

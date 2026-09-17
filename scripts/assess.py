@@ -463,7 +463,11 @@ def main():
         rulesdoc = json.load(fh)
     findings = assess(inv, a.src, rulesdoc)
     if a.resolutions:
-        findings = apply_resolutions(findings, load_resolutions(a.resolutions))
+        try:
+            findings = apply_resolutions(findings, load_resolutions(a.resolutions))
+        except SystemExit as e:
+            print(e)
+            raise SystemExit(2)
     roll = rollup(findings)
     with open(a.out, "w") as fh:
         json.dump({"meta": inv.get("meta", {}), "rollup": roll, "findings": findings,

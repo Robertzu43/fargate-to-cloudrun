@@ -61,6 +61,11 @@ assess AWS. Inventory each service belonging to the application:
 python3 "$SKILL_DIR/scripts/inventory.py" --cluster CLUSTER --service SERVICE --region REGION --out inventory.json
 ```
 
+Without AWS credentials, have the owner export `aws ecs describe-services` and
+`describe-task-definition` for the running service and pass `--service-file` / `--taskdef-file`.
+The inventory records in `meta.provenance` which parts did not come from the live API, and says
+so on stderr. That is the only substitute; a declared task definition is not one.
+
 Environment values are withheld by default. After reviewing configuration names and source usage,
 repeat with `--include-env NAME` for explicitly non-secret values that are needed. Do not dump raw task
 definitions or credential-bearing URLs into the conversation. Other configuration fields use best-effort
@@ -129,6 +134,19 @@ never delete findings, alter the assessment verdict, or invent source facts to f
 For workloads outside its mappings, author the correct configuration directly from verified documentation,
 with a finding-to-change record and tests. Do not weaken the reusable checks for one application.
 
+### A dependency you keep in AWS needs a credential path
+
+On Fargate the task role authenticates every AWS call the container makes. **That role does not
+exist on Cloud Run, and a Google service account cannot assume it.** Any retained AWS dependency —
+SES, S3, DynamoDB, SQS — stops working at cutover unless you give it credentials explicitly. Decide
+this while resolving `deps.aws-service` findings, not after the first failure in production.
+
+Scope whatever you create to exactly what the task role granted, and no wider: reproduce its
+conditions (`ses:FromAddress`, a bucket ARN, a metric namespace), and leave out any grant the
+deployed source never exercises. A grant nobody calls is easy to carry across and hard to remove
+later. Whatever the credential is, it belongs in Secret Manager and reaches the container the same
+way every other secret does; it never goes in the manifest, a build argument, or a log line.
+
 ## 3. Prepare Google Cloud and secrets
 
 Now check gcloud authentication, destination project and billing, region, permissions, and Docker if needed.
@@ -171,6 +189,13 @@ For the simple HTTP path, once findings are resolved and required secret version
 python3 "$SKILL_DIR/scripts/generate.py" --inventory inventory.json --assessment assessment.json \
   --project PROJECT --region REGION --secret-versions secret-versions.json --out-dir out
 ```
+
+`--registry-repo` selects the Artifact Registry repository the image is copied into; point it at an
+existing one rather than creating a repository per migration. `--min-instances` sets minScale, which
+defaults to 0: the ECS desired count is reported as evidence, never copied, because a fixed task
+count is not a floor on idle instances. Raise it only to buy away cold starts, having weighed idle
+cost. When the inventory carries the image digest, the manifest pins the digest and the script
+verifies the copy matches; a tag can be repointed after the revision exists.
 
 Omit `--secret-versions` if the app has no secret references. Review the generated files and chosen target
 before executing destination changes. Run approved steps with `set -euo pipefail`. The script does not

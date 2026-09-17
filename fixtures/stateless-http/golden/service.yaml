@@ -6,7 +6,7 @@ spec:
   template:
     metadata:
       annotations:
-        autoscaling.knative.dev/minScale: "2"  # ecs: service.desiredCount [scaling.min-instances] The initial minimum uses the ECS desired count. This is a migration policy choice, not equivalent autoscaling; review idle cost, concurrency, maximum instances, and background CPU before deploying.
+        autoscaling.knative.dev/minScale: "0"  # ecs: service.desiredCount=2 [scaling.min-instances] ECS desiredCount is a fixed task count; Cloud Run scales on demand, so the count is reported as evidence and minScale defaults to 0. Raise it with --min-instances only to buy away cold starts, and weigh idle cost, concurrency, maximum instances and background CPU before doing so.
     spec:
       serviceAccountName: web-run@my-project.iam.gserviceaccount.com  # created in deploy.sh; the runtime identity
       timeoutSeconds: 300  # Cloud Run documented default [timeout.request] The timeout is set by default to 5 minutes (300 seconds) and can be extended up to 60 minutes (3600 seconds).
