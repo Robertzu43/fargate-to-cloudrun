@@ -4,6 +4,15 @@
 <text x="787.0" y="50" text-anchor="middle" font-size="18" font-weight="700">The agent</text>
 <line x1="48" y1="64" x2="378" y2="64" stroke="#111" stroke-width="1.5"/>
 <line x1="622" y1="64" x2="952" y2="64" stroke="#111" stroke-width="1.5"/>
+<style>
+@media (prefers-color-scheme: dark) {
+  text { fill: #e6edf3; }
+  line, rect, circle { stroke: #e6edf3; }
+  rect[fill="#fff"], circle[fill="#fff"] { fill: #0d1117; }
+  marker path { fill: #e6edf3; }
+  text[fill="#444"] { fill: #9aa4b2; }
+}
+</style>
 <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#111"/></marker></defs>
 <line x1="500" y1="142" x2="500" y2="188" stroke="#111" stroke-width="1.5" marker-end="url(#a)"/>
 <text x="500" y="88" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing="0.8">INSPECT</text>
@@ -22,13 +31,14 @@
 <text x="500" y="204" text-anchor="middle" font-size="11.5" font-weight="700" letter-spacing="0.8">PLAN AND CHANGE</text>
 <circle cx="500" cy="236" r="20" fill="#fff" stroke="#111" stroke-width="2"/>
 <text x="500" y="242" text-anchor="middle" font-size="17" font-weight="700">2</text>
-<rect x="48" y="207.0" width="330" height="58" rx="6" fill="#fff" stroke="#111" stroke-width="1.5" stroke-dasharray="4 3"/>
-<text x="62" y="231.0" font-size="13.5">Read the verdicts: supported,</text>
-<text x="62" y="250.0" font-size="13.5">needs-investigation, blocked.</text>
+<rect x="48" y="197.5" width="330" height="77" rx="6" fill="#fff" stroke="#111" stroke-width="1.5" stroke-dasharray="4 3"/>
+<text x="62" y="221.5" font-size="13.5">Read the verdicts. Decide the ones</text>
+<text x="62" y="240.5" font-size="13.5">no more evidence can settle: a denied</text>
+<text x="62" y="259.5" font-size="13.5">call, source you cannot read.</text>
 <rect x="622" y="197.5" width="330" height="77" rx="6" fill="#fff" stroke="#111" stroke-width="1.5"/>
-<text x="636" y="221.5" font-size="13.5">Checks each setting against the</text>
-<text x="636" y="240.5" font-size="13.5">Cloud Run docs; every verdict quotes</text>
-<text x="636" y="259.5" font-size="13.5">its sentence. Plan goes to migration.md.</text>
+<text x="636" y="221.5" font-size="13.5">Checks each setting against the Cloud</text>
+<text x="636" y="240.5" font-size="13.5">Run docs; every verdict quotes its</text>
+<text x="636" y="259.5" font-size="13.5">sentence. Your decisions are recorded.</text>
 <line x1="378" y1="236" x2="478" y2="236" stroke="#111" stroke-width="1"/>
 <line x1="522" y1="236" x2="622" y2="236" stroke="#111" stroke-width="1"/>
 <line x1="500" y1="374" x2="500" y2="420" stroke="#111" stroke-width="1.5" marker-end="url(#a)"/>
