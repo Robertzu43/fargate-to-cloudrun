@@ -34,7 +34,19 @@
     "service.runningCount",
     "service.pendingCount",
     "service.createdAt",
-    "service.createdBy"
+    "service.createdBy",
+    "service.availabilityZoneRebalancing",
+    "service.currentServiceRevisions",
+    "service.deploymentController",
+    "service.enableECSManagedTags",
+    "service.placementConstraints",
+    "service.placementStrategy",
+    "service.platformFamily",
+    "service.platformVersion",
+    "service.propagateTags",
+    "service.resourceManagementType",
+    "service.roleArn",
+    "service.schedulingStrategy"
   ],
   "rules": [
     {
@@ -139,7 +151,7 @@
       "ecs_field": "cpu, memory (task level)",
       "cloudrun_field": "spec.template.spec.containers[].resources.limits",
       "verdict": "blocked",
-      "explain": "The requested size is missing, invalid, or outside this generator’s documented CPU/memory combinations. Investigate an appropriate target; this is not proof that the application cannot migrate.",
+      "explain": "The requested size is missing, invalid, or outside this generator\u2019s documented CPU/memory combinations. Investigate an appropriate target; this is not proof that the application cannot migrate.",
       "url": "https://docs.cloud.google.com/run/docs/configuring/services/memory-limits",
       "quote": "The maximum amount of memory you can configure is 32 gibibyte",
       "snapshot": "2026-09-16",
