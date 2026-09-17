@@ -34,8 +34,8 @@ gcloud run services replace out/service.yaml --region=us-central1 --project=my-p
 # Docs: https://docs.cloud.google.com/run/docs/deploying
 gcloud run services describe web --region=us-central1 --project=my-project --format='value(status.url)'
 
-# ---- Step 7: Smoke test with your own identity token
-# The caller needs Cloud Run Invoker. This checks HTTP reachability only; run application tests before cutover.
+# ---- Step 7: Smoke test the run.app URL with your own identity token
+# The caller needs Cloud Run Invoker. Reaching run.app directly only works while ingress is all; it checks HTTP reachability only, so run application tests before cutover.
 # Docs: https://docs.cloud.google.com/run/docs/authenticating/developers
 curl -sf --retry 5 --retry-delay 3 -H "Authorization: Bearer $(gcloud auth print-identity-token)" "$(gcloud run services describe web --region=us-central1 --project=my-project --format='value(status.url)')"/ >/dev/null && echo "SMOKE OK" || { echo "SMOKE FAILED"; exit 1; }
 

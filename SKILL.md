@@ -80,14 +80,20 @@ Two gaps are common enough to check by name, because nothing in the inventory wi
 
 - **Who authenticates the user?** An `authenticate-cognito` or `authenticate-oidc` listener action means the
   application never implemented its own login and an ALB has been gating it. Cloud Run cannot be an ALB
-  target, so this becomes a Google load balancer with IAP, or application-level auth. Find any path that is
-  deliberately exempt today (a webhook, a cron endpoint, a health check) -- each exemption has to survive
-  the move as an explicit rule, and a single identity provider shared by several services means migrating
-  one service can remove its users from that shared sign-in.
+  target, so this becomes IAP or application-level auth. Find any path that is deliberately exempt today
+  (a webhook, a cron endpoint, a health check): IAP enabled on the Cloud Run service is service-scoped and
+  cannot exempt a path, so exemptions decide the design -- see the Front-door auth row in
+  [migration-workflow.md](references/migration-workflow.md). A single identity provider shared by several
+  services also means migrating one service can remove its users from that shared sign-in.
 - **What triggers the periodic work?** Not every schedule is an EventBridge rule. A database extension, an
   external SaaS webhook, a partner cron, or another service can call in over HTTP on a timer, and none of
   them appear anywhere in the AWS account. Ask what calls this service and from where, and repoint each
-  caller at cutover.
+  caller at cutover. Ask what each caller sends in the `Authorization` header too: a private Cloud Run
+  service consumes that header for its own IAM check, so a caller with its own bearer token is rejected
+  before the container sees it. `X-Serverless-Authorization` carries the ID token instead, but only if the
+  caller can be configured to send it; when it cannot, that path has to stay reachable without Cloud Run
+  IAM auth. The Inbound schedules row in [migration-workflow.md](references/migration-workflow.md) has
+  the full consequence.
 
 ## 2. Assess, then resolve
 
@@ -191,8 +197,13 @@ python3 "$SKILL_DIR/scripts/generate.py" --inventory inventory.json --assessment
 ```
 
 `--registry-repo` selects the Artifact Registry repository the image is copied into; point it at an
-existing one rather than creating a repository per migration. `--min-instances` sets minScale, which
-defaults to 0: the ECS desired count is reported as evidence, never copied, because a fixed task
+existing one rather than creating a repository per migration. The destination image keeps the *source
+image's* name, not the ECS service name. `--ingress` writes `run.googleapis.com/ingress` explicitly and
+defaults to `all`, which is also Cloud Run's own default: it is what lets the generated smoke test reach
+the `run.app` URL with an identity token while IAM keeps the service private. Pass
+`internal-and-cloud-load-balancing` once the service sits behind a load balancer -- `run.app` then stops
+answering, and the script emits an ingress check in place of that smoke test. `--min-instances` sets
+minScale, which defaults to 0: the ECS desired count is reported as evidence, never copied, because a fixed task
 count is not a floor on idle instances. Raise it only to buy away cold starts, having weighed idle
 cost. When the inventory carries the image digest, the manifest pins the digest and the script
 verifies the copy matches; a tag can be repointed after the revision exists.

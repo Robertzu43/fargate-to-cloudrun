@@ -24,8 +24,8 @@ and network path; replacing it requires code, data/semantic mapping, and tests.
 | Queue/events | Delivery semantics, consumer identity, duplicate handling, ordering, retries, dead letters, schedules, and preventing two active consumers from double-processing. |
 | Files | Persistence, locking, permissions, throughput and backup. Do not replace file storage with object storage without checking application semantics. |
 | Sidecars | Actual responsibility, required startup order, shared resources, credentials and platform alternatives. Do not omit a required sidecar. |
-| Front-door auth | Authentication terminated at the load balancer (`authenticate-cognito`, `authenticate-oidc`) does not move with the container: Cloud Run cannot be an ALB target. Map it to a Google load balancer with IAP or to application-level auth, carry every deliberate path exemption across as an explicit rule, and tell the user plainly if the move takes the service out of a shared sign-in. |
-| Inbound schedules | A trigger outside AWS -- a database extension, a SaaS webhook, a partner cron -- is invisible in the account and has to be repointed at cutover, with the old endpoint kept until it is. |
+| Front-door auth | Authentication terminated at the load balancer (`authenticate-cognito`, `authenticate-oidc`) does not move with the container: Cloud Run cannot be an ALB target. Map it to IAP or to application-level auth, and choose the IAP placement by whether any path is deliberately exempt today. **IAP on the Cloud Run service** is the simpler option Google recommends -- "you can secure traffic with a single click from all ingress paths, including default run.app URLs and load balancers" -- but it is service-scoped, with no per-path exemption, so each exempt path needs its own second Cloud Run service. **IAP on the load balancer's backend service** is set per backend service, so a URL-map path rule can send the exempt paths to a second backend service (its own serverless NEG, pointing at the same Cloud Run service) with IAP off; that is the placement that preserves path exemptions, and it protects only traffic arriving through the load balancer, not the `run.app` URL, which then needs ingress and IAM to close. You cannot enable IAP in both places. Carry every exemption across as an explicit rule, and tell the user plainly if the move takes the service out of a shared sign-in. |
+| Inbound schedules | A trigger outside AWS -- a database extension, a SaaS webhook, a partner cron -- is invisible in the account and has to be repointed at cutover, with the old endpoint kept until it is. **Check what each caller puts in `Authorization` before you make the service IAM-private.** Cloud Run reads the `Authorization` header for its own IAM check, so a caller that sends its own `Authorization: Bearer <app-secret>` is rejected with 401/403 before the container ever sees it -- a silent break in exactly this category (Supabase `pg_net` was the real case). Cloud Run also accepts the ID token in `X-Serverless-Authorization`, documented precisely "if your application already uses the `Authorization` header for custom authorization", and when both are sent only `X-Serverless-Authorization` is checked. That only helps when the caller can be configured to send it. When it cannot, the design consequence is that the path must be reachable **without** Cloud Run IAM auth: allow unauthenticated invocation, keep the application's own token check as the real gate, and narrow the exposure elsewhere (a separate service for that path, load-balancer rules, ingress, IP allowlists). Decide this while mapping inbound callers, not after the first missed cron. |
 | Network/security | ALB listeners and auth, routing, private endpoints, security groups, outbound IPs, allowlists, service discovery, ingress/IAM. Public IP enabled does not imply no private dependencies. |
 | Operations | Image build/release workflow, logs/metrics/alerts, autoscaling, quotas, cost baseline, graceful termination and on-call access. |
 
@@ -34,7 +34,11 @@ Use current official documentation for behavior beyond the bundled mapping rules
 [services/jobs/worker pools](https://docs.cloud.google.com/run/docs/overview/what-is-cloud-run),
 [identity](https://docs.cloud.google.com/run/docs/securing/service-identity),
 [private connectivity](https://docs.cloud.google.com/run/docs/configuring/vpc-direct-vpc),
-[secrets](https://docs.cloud.google.com/run/docs/configuring/services/secrets).
+[secrets](https://docs.cloud.google.com/run/docs/configuring/services/secrets),
+[ingress](https://docs.cloud.google.com/run/docs/securing/ingress),
+[IAP on Cloud Run](https://docs.cloud.google.com/run/docs/securing/identity-aware-proxy-cloud-run),
+[IAP on a backend service](https://docs.cloud.google.com/iap/docs/enabling-cloud-run),
+[calling a private service](https://docs.cloud.google.com/run/docs/authenticating/service-to-service).
 
 ## Prepare an executable plan
 
@@ -50,8 +54,13 @@ migration. Use current provider pricing and observed usage; never promise a fixe
 
 Before applying, inspect destination resources and service IAM. A fresh service is private by default;
 a previously public one can remain public. Verify unauthenticated invocation is rejected and authorized
-invocation succeeds when the intended target is private. Back up existing service configuration before an
-approved replacement. Do not overwrite a production service as a staging experiment.
+invocation succeeds when the intended target is private. "Private" is two independent settings: IAM decides
+who may invoke, ingress decides where the request may arrive from, and Cloud Run's own ingress default is
+`all` -- the generator writes `run.googleapis.com/ingress` into the manifest so the posture is stated
+rather than inherited. Keep it `all` while you validate over the `run.app` URL with an identity token, and
+set `internal-and-cloud-load-balancing` when the service moves behind a load balancer; that setting stops
+`run.app` answering, so the generated `run.app` smoke test moves to the load balancer with it. Back up
+existing service configuration before an approved replacement. Do not overwrite a production service as a staging experiment.
 
 The deployment identity needs permissions for the operations actually used: Cloud Run deployment,
 acting as the runtime identity, image publishing, API enablement, and any approved IAM/secret creation.
