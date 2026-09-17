@@ -260,3 +260,85 @@ class LiveServiceShapeRegressions(unittest.TestCase):
         found = self.uncovered_for(self.MEANINGFUL)
         for k in self.MEANINGFUL:
             self.assertIn('service.' + k, found)
+
+
+ECR_REF = '123456789012.dkr.ecr.us-east-1.amazonaws.com/web:v7'
+DIGEST = 'sha256:' + 'a' * 64
+
+
+def ecr_inv(with_digest=True, **service):
+    inv = copy.deepcopy(BASE)
+    inv['taskDefinition']['containerDefinitions'][0]['image'] = ECR_REF
+    if with_digest:
+        inv['imageDigests'] = {ECR_REF: DIGEST}
+    inv['service'].update(service)
+    return inv
+
+
+def gen_for(inv, **kw):
+    a = result(inv)
+    versions = {s['secret']: '1' for f in a['findings'] if f['rule'] == 'secrets.env' for s in f['value']}
+    return generate.generate(a, inv, 'my-project', 'us-central1', secret_versions=versions, **kw)
+
+
+class ImageIdentityRegressions(unittest.TestCase):
+    """A tag can be repointed after the revision is created; a digest cannot. The manifest has to
+    pin what was actually assessed."""
+
+    def test_manifest_pins_the_digest_when_one_was_collected(self):
+        y, sh = gen_for(ecr_inv())
+        self.assertIn('@' + DIGEST, y)
+        self.assertNotIn(':migrated"', y)
+        # The copy still pushes a tag -- you cannot push to a digest -- so the script must prove
+        # the pushed image is the same one.
+        self.assertIn(':migrated', sh)
+        self.assertIn("image_summary.digest", sh)
+        self.assertIn(DIGEST, sh)
+
+    def test_falls_back_to_the_tag_when_no_digest_was_collected(self):
+        y, sh = gen_for(ecr_inv(with_digest=False))
+        self.assertIn(':migrated', y)
+        self.assertNotIn('image_summary.digest', sh)
+
+    def test_registry_repo_is_configurable(self):
+        y, sh = gen_for(ecr_inv(), repo='platform')
+        self.assertIn('my-project/platform/', y)
+        self.assertIn('repositories describe platform', sh)
+        self.assertNotIn('fargate-to-cloudrun', y)
+
+
+class ScalingRegressions(unittest.TestCase):
+    def test_min_instances_defaults_to_zero_and_keeps_the_count_as_evidence(self):
+        """Copying desiredCount into minScale bills idle instances for a service that may not need them."""
+        y, _ = gen_for(ecr_inv(desiredCount=4))
+        self.assertIn('autoscaling.knative.dev/minScale: "0"', y)
+        self.assertIn('service.desiredCount=4', y)
+
+    def test_min_instances_can_be_raised_deliberately(self):
+        y, _ = gen_for(ecr_inv(desiredCount=4), min_instances=2)
+        self.assertIn('autoscaling.knative.dev/minScale: "2"', y)
+
+
+class ProvenanceRegressions(unittest.TestCase):
+    """Without AWS credentials the only inventory an agent can build is from an export. That path
+    has to exist, and it has to say loudly that it is not the live API."""
+
+    def test_exports_replace_the_api_calls_and_are_labelled(self):
+        with tempfile.TemporaryDirectory() as d:
+            sp, tp = os.path.join(d, 'svc.json'), os.path.join(d, 'td.json')
+            json.dump({'services': [BASE['service']]}, open(sp, 'w'))
+            json.dump({'taskDefinition': BASE['taskDefinition']}, open(tp, 'w'))
+            with mock.patch.object(inventory, 'aws', return_value={}) as m:
+                inv = inventory.collect('c', 's', 'us-east-1', (), service_file=sp, taskdef_file=tp)
+            called = [c.args[:2] for c in m.call_args_list]
+        self.assertNotIn(('ecs', 'describe-services'), called)
+        self.assertNotIn(('ecs', 'describe-task-definition'), called)
+        self.assertTrue(inv['meta']['provenance']['service'].startswith('file:'))
+        self.assertTrue(inv['meta']['provenance']['taskDefinition'].startswith('file:'))
+        self.assertEqual(inv['taskDefinition']['containerDefinitions'][0]['name'],
+                         BASE['taskDefinition']['containerDefinitions'][0]['name'])
+
+    def test_api_collection_is_labelled_too(self):
+        with mock.patch.object(inventory, 'aws', return_value={}):
+            inv = inventory.collect('c', 's', 'us-east-1')
+        self.assertEqual(inv['meta']['provenance'], {'service': 'aws-api', 'taskDefinition': 'aws-api'})

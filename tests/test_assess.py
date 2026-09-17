@@ -347,9 +347,9 @@ class TestGenerate(unittest.TestCase):
 
     def test_ecr_path_steps(self):
         yaml_text, sh_text = gen(set_image(ECR_IMAGE))
-        target = "us-central1-docker.pkg.dev/my-project/fargate-to-cloudrun/web:migrated"
+        target = "us-central1-docker.pkg.dev/my-project/cloud-run/web:migrated"
         expected = [
-            "gcloud artifacts repositories describe fargate-to-cloudrun --location=us-central1 --project=my-project >/dev/null 2>&1 || gcloud artifacts repositories create fargate-to-cloudrun",
+            "gcloud artifacts repositories describe cloud-run --location=us-central1 --project=my-project >/dev/null 2>&1 || gcloud artifacts repositories create cloud-run",
             "aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 123456789012.dkr.ecr.us-east-1.amazonaws.com",
             "gcloud auth configure-docker us-central1-docker.pkg.dev",
             f"docker tag {ECR_IMAGE} {target}",
