@@ -25,7 +25,11 @@ DOCS = {
     "deploy": "https://docs.cloud.google.com/run/docs/deploying",
     "invoke": "https://docs.cloud.google.com/run/docs/authenticating/developers",
     "logs": "https://docs.cloud.google.com/run/docs/logging",
+    "ingress": "https://docs.cloud.google.com/run/docs/securing/ingress",
 }
+# "The default ingress paths and ingress setting allow any resource on the internet to reach your
+# Cloud Run resource." -- so the manifest always says which one it means.
+INGRESS = ("all", "internal", "internal-and-cloud-load-balancing")
 
 
 def q(s):
@@ -33,8 +37,16 @@ def q(s):
     return json.dumps(str(s), ensure_ascii=False)
 
 
+def image_path(src_image):
+    """Repository path of an image reference: no registry host, no tag, no digest."""
+    path = src_image.split("/", 1)[1].split("@", 1)[0]
+    head, _, tail = path.rpartition(":")
+    return head or tail
+
+
 def names(service, project, region, src_image, repo=DEFAULT_REPO, digest=None):
-    """Derive Cloud Run / IAM / Artifact Registry identifiers from the ECS service name and image."""
+    """Cloud Run service and service account come from the ECS service name; the destination image
+    name comes from the SOURCE IMAGE, because that is what the image is called."""
     slug = re.sub(r"[^a-z0-9-]+", "-", service.lower()).strip("-")[:49]
     sa_id = (slug + "-run")[:30].rstrip("-")
     if not re.fullmatch(r"[a-z][a-z0-9-]*[a-z0-9]", slug) or len(sa_id) < 6:
@@ -43,20 +55,26 @@ def names(service, project, region, src_image, repo=DEFAULT_REPO, digest=None):
         raise SystemExit("refusing to generate: ECR Public images cannot be pulled by Cloud Run; copy the image to Artifact Registry first")
     m = re.search(r"^([0-9]{12}\.dkr\.ecr(?:-fips)?\.([a-z0-9-]+)\.amazonaws\.com(?:\.cn)?)/", src_image)
     is_ecr = bool(m)
+    img = image_path(src_image) if is_ecr else ""
+    if is_ecr and not re.fullmatch(r"[a-z0-9][a-z0-9._/-]*[a-z0-9]", img):
+        raise SystemExit(f"cannot derive an Artifact Registry image name from {src_image!r}")
+    dest = f"{region}-docker.pkg.dev/{project}/{repo}/{img}"
     return {
         "slug": slug, "sa_id": sa_id, "sa_email": f"{sa_id}@{project}.iam.gserviceaccount.com",
         # The copy is pushed under a tag, but the manifest pins the DIGEST when one was collected:
         # a tag can be repointed after the revision is created, a digest cannot.
-        "tag": f"{region}-docker.pkg.dev/{project}/{repo}/{slug}:migrated" if is_ecr else src_image,
-        "image": (f"{region}-docker.pkg.dev/{project}/{repo}/{slug}@{digest}" if is_ecr and digest
-                  else (f"{region}-docker.pkg.dev/{project}/{repo}/{slug}:migrated" if is_ecr else src_image)),
+        "tag": f"{dest}:migrated" if is_ecr else src_image,
+        "image": (f"{dest}@{digest}" if is_ecr and digest
+                  else (f"{dest}:migrated" if is_ecr else src_image)),
+        # Pull the exact bytes that were assessed; a tag can be repointed between assessment and copy.
+        "pull_ref": (f"{m.group(1)}/{img}@{digest}" if is_ecr and digest else src_image),
         "repo": repo, "digest": digest,
         "is_ecr": is_ecr, "ecr_host": m.group(1) if m else None, "ecr_region": m.group(2) if m else None,
     }
 
 
 def generate(assessment, inv, project, region, out_dir="out", secret_versions=None,
-             repo=DEFAULT_REPO, min_instances=0):
+             repo=DEFAULT_REPO, min_instances=0, ingress="all"):
     if assessment.get("inventory_sha256") and assessment["inventory_sha256"] != inventory_hash(inv):
         raise SystemExit("assessment belongs to a different inventory; re-run assessment")
     unresolved = [f for f in assessment["findings"] if f["verdict"] != "supported"]
@@ -67,6 +85,8 @@ def generate(assessment, inv, project, region, out_dir="out", secret_versions=No
         raise SystemExit(f"invalid Google Cloud project id: {project!r}")
     if not re.fullmatch(r"[a-z]+-[a-z]+\d", region):
         raise SystemExit(f"invalid Cloud Run region: {region!r}")
+    if ingress not in INGRESS:
+        raise SystemExit(f"invalid ingress setting {ingress!r}; one of: " + ", ".join(INGRESS))
     sup = {f["rule"]: f for f in assessment["findings"] if f["verdict"] == "supported"}
     service = inv["meta"]["service"]
     src_image = sup.get("container.image", {}).get("value")
@@ -89,7 +109,10 @@ def generate(assessment, inv, project, region, out_dir="out", secret_versions=No
     proj = f"--project={project}"
 
     y = ["apiVersion: serving.knative.dev/v1", "kind: Service", "metadata:",
-         f"  name: {q(slug)}  # ecs: service={service}", "spec:", "  template:"]
+         f"  name: {q(slug)}  # ecs: service={service}", "  annotations:",
+         f"    run.googleapis.com/ingress: {q(ingress)}"
+         "  # stated explicitly: Cloud Run's own default lets any resource on the internet reach the service",
+         "spec:", "  template:"]
     if "scaling.min-instances" in sup:
         f = sup["scaling.min-instances"]
         y += ["    metadata:", "      annotations:",
@@ -156,7 +179,7 @@ def generate(assessment, inv, project, region, out_dir="out", secret_versions=No
         step("Copy the image from ECR to Artifact Registry",
              "Cloud Run needs the image in Artifact Registry. The image is copied, not rebuilt.",
              DOCS["registry"],
-             f"docker pull --platform linux/amd64 {shlex.quote(src_image)}", f"docker tag {shlex.quote(src_image)} {n['tag']}", f"docker push {n['tag']}")
+             f"docker pull --platform linux/amd64 {shlex.quote(n['pull_ref'])}", f"docker tag {shlex.quote(n['pull_ref'])} {n['tag']}", f"docker push {n['tag']}")
         if n["digest"]:
             step("Verify the copy is the same image",
                  "The manifest pins this digest. If the copy differs, the revision would run something other than what was assessed.",
@@ -184,12 +207,21 @@ def generate(assessment, inv, project, region, out_dir="out", secret_versions=No
          "Every Cloud Run service gets a stable HTTPS URL on run.app.",
          DOCS["deploy"],
          f"gcloud run services describe {slug} --region={region} {proj} --format='value(status.url)'")
-    step("Smoke test with your own identity token",
-         "The caller needs Cloud Run Invoker. This checks HTTP reachability only; run application tests before cutover.",
-         DOCS["invoke"],
-         f'curl -sf --retry 5 --retry-delay 3 -H "Authorization: Bearer $(gcloud auth print-identity-token)" '
-         f'"$(gcloud run services describe {slug} --region={region} {proj} --format=\'value(status.url)\')"{shlex.quote(health_path)} '
-         '>/dev/null && echo "SMOKE OK" || { echo "SMOKE FAILED"; exit 1; }')
+    if ingress == "all":
+        step("Smoke test the run.app URL with your own identity token",
+             "The caller needs Cloud Run Invoker. Reaching run.app directly only works while ingress is all; "
+             "it checks HTTP reachability only, so run application tests before cutover.",
+             DOCS["invoke"],
+             f'curl -sf --retry 5 --retry-delay 3 -H "Authorization: Bearer $(gcloud auth print-identity-token)" '
+             f'"$(gcloud run services describe {slug} --region={region} {proj} --format=\'value(status.url)\')"{shlex.quote(health_path)} '
+             '>/dev/null && echo "SMOKE OK" || { echo "SMOKE FAILED"; exit 1; }')
+    else:
+        step("Confirm the ingress setting took effect",
+             f"ingress={ingress} stops the run.app URL answering requests from the internet, so reachability has to be "
+             "checked through the load balancer or another allowed source -- not from this script.",
+             DOCS["ingress"],
+             f'test "$(gcloud run services describe {slug} --region={region} {proj} '
+             f'--format=\'value(metadata.annotations["run.googleapis.com/ingress"])\')" = {ingress}')
     step("Show the last 20 log lines",
          "Cloud Run captures stdout and stderr as logs automatically; no agent to install.",
          DOCS["logs"],
@@ -217,6 +249,11 @@ def main():
     ap.add_argument("--registry-repo", default=DEFAULT_REPO,
                     help=f"Artifact Registry repository to copy the image into (default: {DEFAULT_REPO}). "
                          "Point this at an existing repo to avoid creating one per migration.")
+    ap.add_argument("--ingress", choices=INGRESS, default="all",
+                    help="run.googleapis.com/ingress (default: all). Cloud Run's own default is also all; "
+                         "the manifest states it. Use internal-and-cloud-load-balancing once the service sits "
+                         "behind a load balancer -- the run.app URL then stops answering, and so does the "
+                         "generated run.app smoke test.")
     ap.add_argument("--min-instances", type=int, default=0,
                     help="Cloud Run minScale (default: 0). The ECS desired count is reported as evidence, "
                          "not copied: a fixed task count is not a floor on idle instances.")
@@ -231,7 +268,7 @@ def main():
             with open(a.secret_versions) as fh:
                 versions = json.load(fh)
         yaml_text, sh_text = generate(assessment, inv, a.project, a.region, a.out_dir, versions,
-                                      a.registry_repo, a.min_instances)
+                                      a.registry_repo, a.min_instances, a.ingress)
     except SystemExit as e:
         print(e)
         raise SystemExit(2)

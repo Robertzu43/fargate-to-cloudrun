@@ -342,3 +342,77 @@ class ProvenanceRegressions(unittest.TestCase):
         with mock.patch.object(inventory, 'aws', return_value={}):
             inv = inventory.collect('c', 's', 'us-east-1')
         self.assertEqual(inv['meta']['provenance'], {'service': 'aws-api', 'taskDefinition': 'aws-api'})
+
+
+class DestinationImageNameRegressions(unittest.TestCase):
+    """The Artifact Registry copy is named after the image, not the ECS service. `aces-monitoring:sha`
+    pushed to a repository called `aces-monitoring-web` is the wrong image under the wrong name."""
+
+    def image(self, ref):
+        inv = copy.deepcopy(BASE)
+        inv['taskDefinition']['containerDefinitions'][0]['image'] = ref
+        inv['imageDigests'] = {ref: DIGEST}
+        return gen_for(inv)
+
+    def test_image_name_comes_from_the_source_image_not_the_service(self):
+        y, sh = self.image('123456789012.dkr.ecr.us-east-1.amazonaws.com/aces-monitoring:sha-abc')
+        self.assertIn('/cloud-run/aces-monitoring@' + DIGEST, y)
+        self.assertNotIn('/cloud-run/web', y + sh)
+        # the Cloud Run service and its service account still come from the ECS service name
+        self.assertIn('name: "web"', y)
+        self.assertIn('web-run@my-project.iam.gserviceaccount.com', y)
+
+    def test_a_nested_ecr_repository_path_survives(self):
+        y, _ = self.image('123456789012.dkr.ecr.us-east-1.amazonaws.com/team/aces-monitoring:sha-abc')
+        self.assertIn('/cloud-run/team/aces-monitoring@' + DIGEST, y)
+
+    def test_copy_pulls_the_assessed_digest_rather_than_a_tag(self):
+        _, sh = self.image('123456789012.dkr.ecr.us-east-1.amazonaws.com/aces-monitoring:sha-abc')
+        self.assertIn('docker pull --platform linux/amd64 '
+                      '123456789012.dkr.ecr.us-east-1.amazonaws.com/aces-monitoring@' + DIGEST, sh)
+        self.assertNotIn('aces-monitoring:sha-abc\n', sh)
+
+
+class IngressRegressions(unittest.TestCase):
+    """Cloud Run's ingress default is `all`. An unstated annotation makes a service the prose calls
+    private reachable from the internet, and the generated smoke test only works while it is `all`."""
+
+    def test_manifest_states_the_ingress_setting(self):
+        y, _ = gen_for(ecr_inv())
+        self.assertIn('run.googleapis.com/ingress: "all"', y)
+
+    def test_load_balancer_ingress_replaces_the_run_app_smoke_test(self):
+        y, sh = gen_for(ecr_inv(), ingress='internal-and-cloud-load-balancing')
+        self.assertIn('run.googleapis.com/ingress: "internal-and-cloud-load-balancing"', y)
+        self.assertNotIn('print-identity-token', sh)
+        self.assertIn('run.googleapis.com/ingress', sh)
+
+    def test_an_unknown_ingress_setting_is_refused(self):
+        with self.assertRaises(SystemExit):
+            gen_for(ecr_inv(), ingress='private')
+
+
+with open(os.path.join(ROOT, 'references', 'migration-workflow.md')) as f:
+    WORKFLOW = f.read()
+
+
+def row(name):
+    """The one-line table row for `name` in migration-workflow.md."""
+    return next(l for l in WORKFLOW.splitlines() if l.startswith('| ' + name + ' |'))
+
+
+class GuidanceRegressions(unittest.TestCase):
+    def test_inbound_schedules_warn_about_the_authorization_collision(self):
+        """A caller that sends its own bearer token stops working the moment the service is IAM-private."""
+        r = row('Inbound schedules')
+        self.assertIn('`Authorization`', r)
+        self.assertIn('X-Serverless-Authorization', r)
+        self.assertIn('without', r)
+
+    def test_front_door_auth_says_which_iap_keeps_path_exemptions(self):
+        """Service-scoped IAP cannot exempt a path; backend-service IAP can, via a URL-map path rule."""
+        r = row('Front-door auth')
+        self.assertIn('IAP on the Cloud Run service', r)
+        self.assertIn("IAP on the load balancer's backend service", r)
+        self.assertIn('path rule', r)
+        self.assertIn('service-scoped', r)
